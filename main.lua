@@ -180,10 +180,12 @@ local DEFAULT_CONFIG = {
     -- Egg Hatching (Smart Early Bootstrap + Post-Buttons Zone 8 Golden Ridge)
     AutoHatch = true,
     AutoEarlyHatchForDamage = true,      -- Hatch unlocked eggs during rush when team EventDamage is below target
-    EarlyHatchMaxPerEgg = 8,             -- Basic hatch cap when crafting upgrade mode is disabled/unavailable
-    EarlyHatchUpgradeWithCraft = true,   -- Hatch past 8 during Rush when Gold/Rainbow machine is unlocked
-    EarlyHatchMaxCoinsPerEgg = 35000000, -- Base upgrade hatch cap (auto-scales to >= 250x eggCost for Part 2 Eggs 6-8)
-    EarlyHatchLowHatchMaxEggs = 250,     -- Cap early craft hatch eggs on low-hatch (maxHatch < 4) accounts to avoid long slowdowns
+    EarlyHatchMaxPerEgg = 8,             -- Minimum basic hatch cap before Gold/Rainbow craft upgrade mode (scales up with maxEquip)
+    EarlyHatchBasicMaxCap = 25,          -- Max basic-only hatches on Zone 1-2 before Gold/Rainbow machine unlocks
+    EarlyHatchUpgradeWithCraft = true,   -- Hatch past basic cap during Rush when Gold/Rainbow machine is unlocked
+    EarlyHatchMaxCoinsPerEgg = 35000000, -- Base upgrade hatch cap (auto-scales to full Rainbow team budget for Part 2 Eggs 6-8)
+    EarlyHatchLowHatchMaxEggs = 300,     -- Early craft hatch egg cap on Part 1 Eggs for low-hatch (maxHatch < 4) accounts
+    EarlyHatchPart2RainbowMinEggs = 1300,-- Minimum egg cap on Part 2 Eggs 6-8 so low/mid-hatch accounts reach full Rainbow team
     EarlyHatchTargetVariantMult = 4,     -- Target Rainbow tier (4x common EventDamage, or 2x when only Gold is unlocked)
     EarlyHatchTargetBestMult = 5.5,      -- Stop early once weakest >= Rainbow AND best non-Huge >= 5.5x
     EarlyHatchMaxShareOfNextButton = 0.25, -- Pause early upgrade hatch once Coins >= 75% of next critical button
@@ -195,7 +197,7 @@ local DEFAULT_CONFIG = {
     HatchDisableAnimation = true,
     HatchMinBatchMultiplier = 1,    -- Start hatching when Coins >= cost * maxBatch * mult (or >= cost * 1)
     HatchMoveMaxDist = 30,          -- Server allows CustomEggs_Hatch up to ~36 studs; <=30 overlaps Zone 5 breakables
-    HatchCooldown = 0.05,
+    HatchCooldown = 0.02,
 
     -- Pet Crafting (Gold & Rainbow Machine)
     AutoMakeGold = true,                -- Automatically craft Normal pets -> Golden at plot GoldMachine
@@ -207,9 +209,11 @@ local DEFAULT_CONFIG = {
     CraftReserveMinTeamSlots = true,    -- Preserve at least PetCmds.GetMaxEquipped() total pets across inventory
     CraftRequireButtonComplete = true,  -- Require plot GoldMachine / RainbowMachine button to be owned before crafting
     CraftMinBatch = 1,                  -- Minimum crafted output pets per stack before triggering a machine trip
+    CraftPostCompleteMinBatch = 5,      -- Minimum crafted output pets per stack to trigger a craft trip while AFK post-complete hatching
     CraftMaxBatchPerInvoke = 25,        -- Max crafted pets per single Network.Invoke call (chunks larger stacks)
     CraftCheckIntervalSec = 1.0,        -- Seconds between craft eligibility scans
-    CraftHatchYieldIntervalSec = 6.0,   -- Max seconds continuous AutoHatch runs before yielding to pending crafts
+    CraftEarlyHatchYieldIntervalSec = 8.0, -- Yield early bootstrap hatching every 8s to batch 5-7x Gold -> Rainbow crafts with minimal travel overhead
+    CraftHatchYieldIntervalSec = 30.0,  -- Post-complete AFK hatch yield interval (30s) to maximize Huge/Titanic hatch uptime
     CraftFailCooldownSec = 10,          -- Cooldown backoff after a failed machine invoke
 
     -- Wild Hunt, Sighting & Pet Net Store (Part 2)
@@ -5628,14 +5632,21 @@ function Runtime.Helpers.GetMaxHatchCount()
     return 1
 end
 
-function Runtime.Helpers.GetEarlyHatchMaxCoins(eggCost, lowHatch)
+function Runtime.Helpers.GetEarlyHatchMaxCoins(eggCost, lowHatch, maxEquip)
+    local eq = math.max(4, math.floor(tonumber(maxEquip) or 15))
     local maxCoins = math.max(0, tonumber(Config.EarlyHatchMaxCoinsPerEgg) or 35000000)
-    if type(eggCost) == "number" and eggCost >= 100000 then
-        -- Part 2 Eggs 6-8 cost 128k..8.192M per egg; allow up to 250x eggCost (still capped by next-button & balance guards)
-        maxCoins = math.max(maxCoins, eggCost * 250)
+    local isPart2Egg = (type(eggCost) == "number" and eggCost >= 100000)
+    if isPart2Egg then
+        -- Part 2 Eggs 6-8 (128k..8.192M): allow enough eggs to craft a full Rainbow team (100 Normals / 10 Golds per Rainbow)
+        local minP2Eggs = math.max(300, math.floor(tonumber(Config.EarlyHatchPart2RainbowMinEggs) or 1300))
+        local p2EggBudget = lowHatch
+            and math.clamp(math.max(minP2Eggs, eq * 110), minP2Eggs, 1800)
+            or math.clamp(math.max(minP2Eggs, eq * 115), minP2Eggs, 3500)
+        return math.max(maxCoins, eggCost * p2EggBudget)
     end
     if lowHatch and type(eggCost) == "number" and eggCost > 0 then
-        local lowCapEggs = math.max(8, math.floor(tonumber(Config.EarlyHatchLowHatchMaxEggs) or 250))
+        local cfgLow = math.max(8, math.floor(tonumber(Config.EarlyHatchLowHatchMaxEggs) or 300))
+        local lowCapEggs = math.clamp(math.max(cfgLow, eq * 16), cfgLow, 450)
         maxCoins = math.min(maxCoins, lowCapEggs * eggCost)
     end
     return maxCoins
@@ -5658,57 +5669,66 @@ EvaluateEarlyBootstrap = function(plot, buttons)
         commonDmg = GetEggCommonPower(eggName)
     end
     local snap = GetTeamPowerSnapshot(false)
+    local goldReady = Config.AutoMakeGold ~= false and Runtime.Helpers.HasCraftMachineUnlocked("GoldMachine", plot, buttons)
+    local rainbowReady = Config.AutoMakeRainbow ~= false and Runtime.Helpers.HasCraftMachineUnlocked("RainbowMachine", plot, buttons)
+    local craftUpgradeEnabled = (Config.EarlyHatchUpgradeWithCraft ~= false) and (commonDmg > 0) and (goldReady or rainbowReady)
+
     local needsBasic = (snap.ownedTotal < snap.maxEquip)
         or (commonDmg > 0 and snap.weakest < (commonDmg * 0.99))
 
     if needsBasic then
-        local maxBasic = math.max(1, math.floor(tonumber(Config.EarlyHatchMaxPerEgg) or 8))
+        local cfgBasic = math.max(1, math.floor(tonumber(Config.EarlyHatchMaxPerEgg) or 8))
+        local basicCap = math.max(cfgBasic, math.floor(tonumber(Config.EarlyHatchBasicMaxCap) or 25))
+        local maxBasic = math.clamp(math.max(cfgBasic, snap.maxEquip), cfgBasic, basicCap)
         local hatchedHere = Runtime.Cache.EarlyHatchedByEgg[eggName] or 0
-        if hatchedHere >= maxBasic then
+        if hatchedHere < maxBasic then
+            Runtime.Cache.ReserveEarlyEggCost = (Config.EarlyHatchReserveCoins ~= false) and eggCost or 0
+            return true, eggUid, eggName, eggPos, eggMax, eggCost, (maxBasic - hatchedHere)
+        end
+        if not craftUpgradeEnabled then
             Runtime.Cache.ReserveEarlyEggCost = 0
             return false
         end
-        Runtime.Cache.ReserveEarlyEggCost = (Config.EarlyHatchReserveCoins ~= false) and eggCost or 0
-        return true, eggUid, eggName, eggPos, eggMax, eggCost, (maxBasic - hatchedHere)
+        -- Gold/Rainbow craft upgrade mode is active: fall through to craft-upgrade budget instead of deadlocking at maxBasic
     end
 
-    if Config.EarlyHatchUpgradeWithCraft == false or commonDmg <= 0 then
+    if not craftUpgradeEnabled then
         Runtime.Cache.ReserveEarlyEggCost = 0
         return false
     end
 
-    local goldReady = Config.AutoMakeGold ~= false and Runtime.Helpers.HasCraftMachineUnlocked("GoldMachine", plot, buttons)
-    local rainbowReady = Config.AutoMakeRainbow ~= false and Runtime.Helpers.HasCraftMachineUnlocked("RainbowMachine", plot, buttons)
-    if not goldReady and not rainbowReady then
-        Runtime.Cache.ReserveEarlyEggCost = 0
-        return false
-    end
-
-    -- Scale craft bootstrap targets to maxHatch & include 10% uncommon egg pets (e.g. Cocoa Husky R7 in Zone 6 Pine Woods Egg)
+    -- Scale craft bootstrap targets to maxHatch & Part 2 Eggs (full Rainbow team on Part 2 Eggs 6-8 even on low-hatch accounts)
     local maxHatch = Runtime.Helpers.GetMaxHatchCount()
     local lowHatch = (maxHatch < 4)
+    local isPart2Egg = (type(eggCost) == "number" and eggCost >= 100000)
     local uncommonDmg = Runtime.Helpers.GetEggUncommonEventDamage(eggName)
-    local variantCap = rainbowReady and (lowHatch and 2 or math.min(4, tonumber(Config.EarlyHatchTargetVariantMult) or 4)) or 2
+    local fullRainbowTarget = rainbowReady and (not lowHatch or isPart2Egg)
+    local variantCap = fullRainbowTarget
+        and math.min(4, tonumber(Config.EarlyHatchTargetVariantMult) or 4)
+        or 2
     local targetWeakDmg = commonDmg * variantCap
-    local bestMult = rainbowReady and (lowHatch and 4 or (tonumber(Config.EarlyHatchTargetBestMult) or 5.5)) or variantCap
+    local bestMult = rainbowReady
+        and (lowHatch and 4 or (tonumber(Config.EarlyHatchTargetBestMult) or 5.5))
+        or variantCap
     local targetBestDmg = commonDmg * bestMult
     if uncommonDmg > commonDmg then
         if lowHatch then
-            targetWeakDmg = math.max(targetWeakDmg, uncommonDmg)
+            targetWeakDmg = math.max(targetWeakDmg, uncommonDmg * ((isPart2Egg and goldReady) and 2 or 1))
             targetBestDmg = math.max(targetBestDmg, uncommonDmg * (goldReady and 2 or 1))
         else
             targetWeakDmg = math.max(targetWeakDmg, uncommonDmg * (goldReady and 2 or 1))
             targetBestDmg = math.max(targetBestDmg, uncommonDmg * (rainbowReady and 4 or (goldReady and 2 or 1)))
         end
     end
-    local needsUpgrade = (snap.weakest < (targetWeakDmg * 0.99))
+    local needsUpgrade = needsBasic
+        or (snap.weakest < (targetWeakDmg * 0.99))
         or ((goldReady or rainbowReady) and snap.bestNonHuge < (targetBestDmg * 0.99))
     if not needsUpgrade then
         Runtime.Cache.ReserveEarlyEggCost = 0
         return false
     end
 
-    local maxCoins = Runtime.Helpers.GetEarlyHatchMaxCoins(eggCost, lowHatch)
+    local maxCoins = Runtime.Helpers.GetEarlyHatchMaxCoins(eggCost, lowHatch, snap.maxEquip)
     local spentCoins = Runtime.Cache.EarlyCoinsSpentByEgg[eggName] or 0
     local budgetRem = maxCoins - spentCoins
     if budgetRem < eggCost then
@@ -5824,14 +5844,17 @@ local function StepHatch(plot, buttons, tycoonComplete)
     Runtime.Cache.HatchInFlight = true
     local moveMaxDist = tonumber(Config.HatchMoveMaxDist) or 30
     local _, hrp = GetCharacter()
-    if hrp and ((hrp.Position - eggPos).Magnitude > moveMaxDist) then
+    if hrp and (HorizontalDist(hrp.Position, eggPos) > moveMaxDist or math.abs(hrp.Position.Y - eggPos.Y) > 18) then
         local dest = ComputeEggOverlapPos(eggPos, moveMaxDist)
+        pcall(function()
+            hrp.AssemblyLinearVelocity = Vector3.zero
+        end)
         MoveNear(dest, 4)
-        local waitUntil = os.clock() + 1.20
-        task.wait(0.25) -- Allow physics position replication before CustomEggs_Hatch range check
+        local waitUntil = os.clock() + 1.10
+        task.wait(0.15) -- Allow physics position replication before CustomEggs_Hatch range check
         local eggObj = Modules.CustomEggsCmds and Modules.CustomEggsCmds.Get and Modules.CustomEggsCmds.Get(eggUid)
         while IsRunning() and eggObj and eggObj._hatchable ~= true and os.clock() < waitUntil do
-            task.wait(0.05)
+            task.wait(0.04)
         end
         if not IsRunning() or not Config.AutoHatch or Runtime.Stats.FightingTurkeyBoss or IsMoveLocked() or (Runtime.Cache.HatchYieldUntil or 0) > os.clock() then
             Runtime.Cache.HatchInFlight = false
@@ -5859,28 +5882,36 @@ local function StepHatch(plot, buttons, tycoonComplete)
             Runtime.Stats.EarlyEggsHatched = Runtime.Stats.EarlyEggsHatched + batch
             Runtime.Cache.EarlyHatchedByEgg[eggName] = (Runtime.Cache.EarlyHatchedByEgg[eggName] or 0) + batch
             Runtime.Cache.EarlyCoinsSpentByEgg[eggName] = (Runtime.Cache.EarlyCoinsSpentByEgg[eggName] or 0) + spentNow
-            local prevSnap = Runtime.Cache.TeamPowerSnapshot
-            local prevBest = prevSnap and prevSnap.best or 0
-            local prevWeak = prevSnap and prevSnap.weakest or 0
-            Runtime.Cache.TeamPowerSnapshotAt = 0
-            local snap = GetTeamPowerSnapshot(true)
             local now = os.clock()
             local hatchedCnt = Runtime.Cache.EarlyHatchedByEgg[eggName]
-            if hatchedCnt <= 8 or (hatchedCnt % 50 == 0) or (now - (Runtime.Cache.LastEarlyHatchLogAt or 0) >= 15) then
+            local prevSnap = Runtime.Cache.TeamPowerSnapshot
+            local prevMaxEquip = (prevSnap and prevSnap.maxEquip) or 15
+            local isFinalBatch = (type(remainingCap) == "number" and remainingCap <= batch)
+            local shouldRescan = (hatchedCnt <= prevMaxEquip)
+                or isFinalBatch
+                or ((now - (Runtime.Cache.LastEarlySnapAt or 0)) >= 1.5)
+            local snap = prevSnap
+            if shouldRescan then
+                Runtime.Cache.LastEarlySnapAt = now
+                local prevBest = prevSnap and prevSnap.best or 0
+                local prevWeak = prevSnap and prevSnap.weakest or 0
+                Runtime.Cache.TeamPowerSnapshotAt = 0
+                snap = GetTeamPowerSnapshot(true)
+                if snap.ownedTotal < snap.maxEquip or snap.best > prevBest or snap.weakest > prevWeak or (now - (Runtime.Cache.LastEquipBestAt or 0)) >= 4.0 then
+                    EnsureBestPetsEquipped(true)
+                end
+            end
+            if hatchedCnt <= 8 or isFinalBatch or (hatchedCnt % 50 == 0) or (now - (Runtime.Cache.LastEarlyHatchLogAt or 0)) >= 15 then
                 Runtime.Cache.LastEarlyHatchLogAt = now
                 local spentM = (Runtime.Cache.EarlyCoinsSpentByEgg[eggName] or 0) / 1e6
-                local capCoins = Runtime.Helpers.GetEarlyHatchMaxCoins(eggCost, maxHatch < 4)
+                local capCoins = Runtime.Helpers.GetEarlyHatchMaxCoins(eggCost, maxHatch < 4, snap and snap.maxEquip or prevMaxEquip)
                 Log("INFO", "Early-hatched [%s]: %d eggs (%.2fM/%.1fM Coins, team best=%s weakest=%s)",
-                    eggName, hatchedCnt, spentM, capCoins / 1e6, tostring(snap.bestNonHuge or snap.best), tostring(snap.weakest))
-            end
-            if snap.ownedTotal < snap.maxEquip or snap.best > prevBest or snap.weakest > prevWeak or (now - (Runtime.Cache.LastEquipBestAt or 0)) >= 4.0 then
-                EnsureBestPetsEquipped(true)
-                task.delay(0.15, function()
-                    if IsRunning() then
-                        GetTeamPowerSnapshot(true)
-                        EnsureBestPetsEquipped(false)
-                    end
-                end)
+                    eggName,
+                    hatchedCnt,
+                    spentM,
+                    capCoins / 1e6,
+                    tostring(snap and (snap.bestNonHuge or snap.best) or 0),
+                    tostring(snap and snap.weakest or 0))
             end
         end
     elseif ok and res == false and errMsg == "Failed to commit!" then
@@ -6249,7 +6280,7 @@ local function EstimateCandidateCraftPower(data, inst, pd, spec)
 end
 
 --- Build deterministic craft batches for one machine spec (strongest pets first) while honoring team protections.
-local function BuildCraftPlans(spec, cost, invPets, protected, eventPetSet, totalOwnedPets)
+local function BuildCraftPlans(spec, cost, invPets, protected, eventPetSet, totalOwnedPets, minBatchOverride)
     local plans = {}
     if type(invPets) ~= "table" or cost < 1 then
         return plans
@@ -6282,7 +6313,7 @@ local function BuildCraftPlans(spec, cost, invPets, protected, eventPetSet, tota
         return tostring(a.uid) < tostring(b.uid)
     end)
 
-    local minBatch = math.max(1, math.floor(tonumber(Config.CraftMinBatch) or 1))
+    local minBatch = math.max(1, math.floor(tonumber(minBatchOverride or Config.CraftMinBatch) or 1))
     local reserveTeam = Config.CraftReserveMinTeamSlots ~= false
     local spareSlots = reserveTeam and math.max(0, totalOwnedPets - (protected.maxEquip or 4)) or math.huge
 
@@ -6414,14 +6445,15 @@ local function WaitForCraftReplication(prevGoldCount, beforeAmounts, consumedByU
                 end
             end
 
+            if CountGoldPets(curInv) >= (prevGoldCount + crafted) then
+                local curTotal, curProtected = CollectInventoryCraftState(curInv)
+                return curInv, curTotal, curProtected
+            end
             if allDeducted then
                 local curTotal, curProtected = CollectInventoryCraftState(curInv)
                 lastDeductedInv = curInv
                 lastDeductedTotal = curTotal
                 lastDeductedProtected = curProtected
-                if CountGoldPets(curInv) >= (prevGoldCount + crafted) then
-                    return curInv, curTotal, curProtected
-                end
             end
         end
 
@@ -6502,10 +6534,16 @@ local function StepCraftPets(plot, buttons)
     end
     local totalOwnedPets, protected = CollectInventoryCraftState(invPets)
 
+    local isHatchingNow = (Runtime.Stats.IsHatching == true) or (Runtime.Cache.HatchInFlight == true)
+    local isPostCompleteAfk = (Runtime.Stats.TycoonComplete == true) and isHatchingNow
+    local triggerMinBatch = isPostCompleteAfk
+        and math.max(1, math.floor(tonumber(Config.CraftPostCompleteMinBatch) or 5))
+        or math.max(1, math.floor(tonumber(Config.CraftMinBatch) or 1))
+
     local hasPendingWork = false
     for _, spec in ipairs(CRAFT_SPECS) do
         if IsSpecReadyToCheck(spec, plot, buttons, now) then
-            local plans = BuildCraftPlans(spec, GetCraftCost(spec), invPets, protected, eventPetSet, totalOwnedPets)
+            local plans = BuildCraftPlans(spec, GetCraftCost(spec), invPets, protected, eventPetSet, totalOwnedPets, triggerMinBatch)
             if #plans > 0 then
                 hasPendingWork = true
                 break
@@ -6521,9 +6559,10 @@ local function StepCraftPets(plot, buttons)
         Runtime.Cache.PendingCraftReadySince = now
     end
 
-    local isHatchingNow = (Runtime.Stats.IsHatching == true) or (Runtime.Cache.HatchInFlight == true)
     if isHatchingNow then
-        local yieldSec = math.max(0, tonumber(Config.CraftHatchYieldIntervalSec) or 4.0)
+        local yieldSec = isPostCompleteAfk
+            and math.max(0, tonumber(Config.CraftHatchYieldIntervalSec) or 30.0)
+            or math.max(0, tonumber(Config.CraftEarlyHatchYieldIntervalSec) or 8.0)
         local waitSinceReady = now - (Runtime.Cache.PendingCraftReadySince or now)
         local waitSinceTrip = now - (Runtime.Cache.LastCraftTripAt or 0)
         if waitSinceReady < yieldSec or waitSinceTrip < yieldSec then
@@ -6555,7 +6594,12 @@ local function StepCraftPets(plot, buttons)
 
             local stepNow = os.clock()
             if IsSpecReadyToCheck(spec, plot, buttons, stepNow) then
+                local cost = GetCraftCost(spec)
                 if idx > 1 and prevCrafted > 0 then
+                    if (prevGoldCount + prevCrafted) < cost then
+                        prevCrafted = 0
+                        break
+                    end
                     local updatedInv, newTotal, newProtected = WaitForCraftReplication(
                         prevGoldCount,
                         prevBeforeAmounts,
@@ -6573,7 +6617,6 @@ local function StepCraftPets(plot, buttons)
                     protected = newProtected
                 end
 
-                local cost = GetCraftCost(spec)
                 local plans = BuildCraftPlans(spec, cost, invPets, protected, eventPetSet, totalOwnedPets)
                 if #plans > 0 then
                     local beforeAmounts = {}
@@ -8777,7 +8820,7 @@ local function StartLoops()
                 Runtime.Stats.IsHatching = false
                 Runtime.Cache.HatchInFlight = false
             end
-            task.wait(Runtime.Stats.IsHatching and (Config.HatchCooldown or 0.05) or 0.25)
+            task.wait(Runtime.Stats.IsHatching and (Config.HatchCooldown or 0.02) or 0.25)
         end
     end)
 
