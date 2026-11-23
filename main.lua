@@ -274,6 +274,7 @@ local DEFAULT_CONFIG = {
     TurkeyBossRequireCannon = false,    -- false = attempt direct fly even without Zone8_Cannon; true = require Cannon / Rebirth >= 1
     TurkeyBossSmartKillCheck = true,    -- Avoid wasting 15m on unkillable solo/low-DPS bosses; monitor TurkeyTop passively to rejoin if help arrives
     TurkeyBossSoloProbeSec = 25,        -- Seconds to probe a fresh boss solo before returning to island if no other player joins
+    TurkeyBossLowDpsWarmupSec = 60,     -- Warmup seconds while fighting with others before allowing low_dps abort (prevents multi-acc race)
     TurkeyBossKillMargin = 0.85,        -- Require projected (serverDps * secLeft) >= health * margin to stay/engage
     TurkeyBossMinShareStop = 0,         -- 0 = stay until boss dies/despawns; > 0 (e.g. 0.015) = leave once PumpkinTurkeyShare >= threshold
     TurkeyBossNoDamageTimeoutSec = 25,  -- Abort spawn if 0 share after 25s attacking without Cannon so farm is never stalled
@@ -7068,9 +7069,13 @@ function Runtime.Helpers.GetTurkeyBossState(plot, buttons)
         end
         local killMargin = math.clamp(tonumber(Config.TurkeyBossKillMargin) or 0.85, 0.5, 1.2)
         local probeSec = math.max(0, tonumber(Config.TurkeyBossSoloProbeSec) or 25)
+        local lowDpsWarmupSec = math.max(0, tonumber(Config.TurkeyBossLowDpsWarmupSec) or 60)
 
         local remShare = health / maxHealth
         local canSoloFinish = (myDpsEst * secLeft >= health * 1.05) and ((myShare + remShare) < soloShare)
+        -- Require boss HP < 99% before treating myShare >= contribMin as already contributed (guards stale attribute at spawn)
+        local contributedThisSpawn = (myShare >= contribMin) and (health < (maxHealth * 0.99))
+        local alreadyProbed = (Runtime.Cache.TurkeyBossProbedWindow == windowKey) or contributedThisSpawn
 
         local shouldAbortReason = nil
         local effectiveDps = myDpsEst
@@ -7081,13 +7086,22 @@ function Runtime.Helpers.GetTurkeyBossState(plot, buttons)
             effectiveDps = (observedDps ~= nil and observedDps > 0) and observedDps or reportedTeamDps
             local projectedDmg = effectiveDps * secLeft
             if projectedDmg < (health * killMargin) then
-                shouldAbortReason = "low_dps"
+                if Runtime.Stats.FightingTurkeyBoss then
+                    -- Give full warmup so all players' pets land and observedDps stabilizes before aborting
+                    if engagedAt > 0 and (nowClk - engagedAt) >= lowDpsWarmupSec then
+                        Runtime.Cache.TurkeyBossProbedWindow = windowKey
+                        shouldAbortReason = "low_dps"
+                    end
+                else
+                    -- Allow simultaneous multi-acc entry during the opening 30s of an unprobed spawn
+                    local freshOpeningJoin = (probeSec > 0) and (not alreadyProbed) and (secLeft >= 120) and (secLeft >= (lifeSec - 30))
+                    if not freshOpeningJoin then
+                        shouldAbortReason = "low_dps"
+                    end
+                end
             end
         elseif not canSoloFinish then
             -- Solo and cannot finish alone: allow one short probe on a fresh spawn, then wait passively on home island
-            -- Require boss HP < 99% before treating myShare >= contribMin as already contributed (guards stale attribute at spawn)
-            local contributedThisSpawn = (myShare >= contribMin) and (health < (maxHealth * 0.99))
-            local alreadyProbed = (Runtime.Cache.TurkeyBossProbedWindow == windowKey) or contributedThisSpawn
             if alreadyProbed or probeSec <= 0 or secLeft < 120 then
                 shouldAbortReason = "solo_unkillable"
             elseif Runtime.Stats.FightingTurkeyBoss and engagedAt > 0 and (nowClk - engagedAt) >= probeSec then
