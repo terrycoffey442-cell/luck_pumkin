@@ -13,7 +13,7 @@ getgenv().Config = getgenv().Config or {
     -- Progression (Part 1 + Part 2)
     RushButtonsFirst = true,          -- Hold Coins for Buttons + Completion before Hatch/Merchant
     AutoCompletePart2 = true,         -- Claim Part 2 completion (MH_Conclude) at 117/117
-    BuyOptionalPart2Buttons = false,  -- Optional Zone 8 Cannon & Rebirth Shrine after 117/117
+    BuyOptionalPart2Buttons = false,  -- Optional Zone 8 Rebirth Shrine (Zone 8 Cannon auto-buys after 117/117 when AutoTurkeyBoss=true)
     TargetRebirths = 0,               -- 0 = Off | 3 = max 1.0x egg odds | 20 = max +400% Coins | -1 = infinite
 
     -- Hatching & Crafting
@@ -25,6 +25,11 @@ getgenv().Config = getgenv().Config or {
     -- Economy, Gifts & Pedestals
     AutoOpenGifts = true,
     AutoConsumeBoosts = true,         -- Auto use Patch Coin / Pumpkin Damage / Island Luck Boost consumables
+    AllowedConsumableBoosts = {       -- Per-boost & per-tier toggle (true = eat, false = keep to sell/mail)
+        ["Patch Coin Boost"]     = { Tier1 = true, Tier2 = true, Tier3 = false }, -- +50% / +100% / +300% Coins
+        ["Pumpkin Damage Boost"] = { Tier1 = true, Tier2 = true, Tier3 = false }, -- +50% / +100% / +300% Damage
+        ["Island Luck Boost"]    = { Tier1 = true, Tier2 = true, Tier3 = false }, -- +25% / +50% / +150% Luck
+    },
     AutoUpgrades = true,
     AutoCocoaStand = true,
     AutoBuyMerchant = true,           -- Auto buy Merchant Mythical+/Exotic+/Legendary+ (<= 5% Coins in Part 2 Rush)
@@ -36,6 +41,9 @@ getgenv().Config = getgenv().Config or {
     AutoCatchSighting = true,         -- Auto catch Boss Turkey Sightings (PV_Glimpse)
     HuntMinTier = 4,                  -- 0=Any | 1=Uncommon+ | 2=Rare+ | 3=Epic+ | 4=Huges only
     HuntVariantsOnly = false,         -- true = only catch Golden/Rainbow/Shiny
+    HuntRerollWild = true,            -- Post-complete: burn spare Pet Nets in HuntRerollZone to reroll Wild Huge (0s respawn)
+    HuntRerollZone = 1,               -- Target zone to reroll (1 = Huge Cocoa Husky 1/237, 5 = Huge Gobble Axolotl 1/381)
+    HuntRerollKeepNets = 15,          -- Minimum Pet Net reserve kept for real Huges/Sightings
     AutoBuyNetStore = true,           -- Auto buy Net Store (always buys Ultra Net; buys Pet Net post-buttons or <= 5% Coins in Rush)
 
     -- Performance & UI
@@ -46,6 +54,17 @@ getgenv().Config = getgenv().Config or {
     -- Discord Pet Drop Webhook (Huge / Titanic / Gargantuan)
     WebhookEnabled = true,
     WebhookUrl = "",                  -- Personal Discord Webhook URL
+
+    -- Auto Mail (Send Only, continuous via EF_Relay; auto-skips untradable/locked/equipped)
+    AutoMail = false,                 -- Set true + configure MailUsernames & MailItems to enable Auto Send
+    MailUsernames = {},               -- Recipient username(s): { "MainAcc" } or "MainAcc"
+    MailItems = {                     -- Whitelist: ["Item Name"] = Amount | "Max" | { Class = "...", Amount = "Max", MinAmount = 1, Keep = 0 }
+        -- ["Huge Pets"]     = { Class = "Pet", Amount = "Max" },
+        -- ["Titanic Pets"]  = { Class = "Pet", Amount = "Max" },
+        -- ["Diamonds"]      = { Class = "Currency", Amount = "Max" },
+        -- ["Crystal Key"]   = { Class = "Misc", Amount = "Max" },
+    },
+    MailMinDiamondsReserve = 100000,  -- Diamonds kept on account when mailing Currency:Diamonds (fee added on top)
 }
 
 -- ============================================================================
@@ -106,6 +125,7 @@ local DEFAULT_CONFIG = {
     -- Keep / Lock / Stock / Merchant (A2)
     KeepRung = 0,                   -- Ladder: 2=Rare..8=Secret manual; 0=Off in Part 1 (auto EarnRate Lock in Part 2 Zone 6+)
     AutoKeepPart2Pedestals = true,  -- In Part 2 Zone 6+, automatically lock top EarnRate pedestals for passive Ref[6..8] Coins/s
+    PostCompleteSmartLuckLock = true, -- After 117/117, trim locked pedestals to minimum high-Rung slots needed for full +100% PumpkinLuck (opens 5-7 slots for Token farming)
     Part2KeepMinRung = 4,           -- Minimum base rung equivalent (4=Legendary / 0.25x Ref) for Part 2 auto-lock
     Part2MinFarmPedestals = 1,      -- Keep 1 open pedestal for Token farming & Merchant placement in Part 2 (locks 5/6 -> 7/8)
     LockMinRung = 0,                -- 0 = follow KeepRung; or set >= 2 to override
@@ -142,15 +162,25 @@ local DEFAULT_CONFIG = {
         "StockSlots",
         "MerchantLuck",
     },
+    UpgradePriorityPostComplete = {
+        "EggLuck",
+        "ChaseOdds",
+        "RespawnSpeed",
+        "SpawnLuck",
+        "MerchantLuck",
+        "StockSlots",
+        "PumpkinDamage",
+        "PumpkinCoins",
+    },
     UpgradeCheapCatchupRatio = 0.40, -- Buy lower-priority track if cost <= 40% of blocked top priority (0 = strict linear)
 
     -- Boosts, Fruits, Hot Cocoa Stand & Flannel Gifts (A2/A4)
     AutoConsumeBoosts = true,
     BoostRefreshSeconds = 15,
     AllowedConsumableBoosts = {
-        ["Patch Coin Boost"] = true,
-        ["Pumpkin Damage Boost"] = true,
-        ["Island Luck Boost"] = true,
+        ["Patch Coin Boost"]     = { Tier1 = true, Tier2 = true, Tier3 = false },
+        ["Pumpkin Damage Boost"] = { Tier1 = true, Tier2 = true, Tier3 = false },
+        ["Island Luck Boost"]    = { Tier1 = true, Tier2 = true, Tier3 = false },
     },
 
     AutoConsumeFruits = true,
@@ -170,6 +200,8 @@ local DEFAULT_CONFIG = {
     CocoaActivateCoins = 300000000,      -- Activate Hot Cocoa Stand at >= 300M Patch Coins
     CocoaMaintainMinutes = 2,
     CocoaBuyStepMinutes = 2,             -- Buy 1-2 minutes per refresh cycle while maintaining >= CocoaMinSpareCoins
+    CocoaPostCompleteMaintainMinutes = 30, -- Post-complete (rich Coins): refill when axis timer drops below 30m
+    CocoaPostCompleteBatchMinutes = 120,   -- Post-complete (rich Coins): buy 120m (2h) per trip so character rarely leaves Zone 8 Egg
     CocoaMinSpareCoins = 150000000,      -- Keep at least 150M Patch Coins spare after Cocoa purchase
     CocoaRushAxes = { "Coins" },         -- During Rush with KeepRung=0, only Coins Cocoa is net-positive near ~3.5M/s
     CocoaAxes = { "Coins", "Damage", "IslandLuck" },
@@ -225,6 +257,10 @@ local DEFAULT_CONFIG = {
     HuntUltraOnHuge = true,             -- Use Ultra Pet Net first on Huges/Sightings and save it exclusively for them
     HuntUseNormalNetOnHuge = true,      -- Fallback to Pet Net on Huges/Sightings when 0 Ultra Pet Nets remain
     HuntMinCatchChance = 0,             -- Optional minimum catch probability (0..1)
+    HuntRerollWild = true,              -- Burn spare normal Pet Nets in HuntRerollZone to reroll Wild Huge spawns immediately
+    HuntRerollZone = 1,                 -- Reroll zone (1 = Huge Cocoa Husky 1/237 highest odds; 5 = Huge Gobble Axolotl 1/381)
+    HuntRerollKeepNets = 15,            -- Minimum normal Pet Net reserve to keep for real Huge/Sighting catches
+    HuntRerollRequireButtonsComplete = true, -- Only burn spare Pet Nets after 117/117 buttons complete
     DisableServerAutoHunt = true,       -- Turn off server 80-stud/6s Auto Hunt when AutoHuntWild is active
     AutoBuyNetStore = true,             -- Auto buy Pet Net Store via Merchant_RequestPurchase
     KeepServerAutoNetsOff = true,       -- Turn off server AutoBuyNets so Rush Coins budget is respected
@@ -237,6 +273,9 @@ local DEFAULT_CONFIG = {
     -- Server-Wide Turkey Boss (Part 2 TurkeyArena)
     AutoTurkeyBoss = true,              -- Fly to TurkeyArena and fight Turkey Boss whenever TurkeyAlive == true
     TurkeyBossRequireCannon = false,    -- false = attempt direct fly even without Zone8_Cannon; true = require Cannon / Rebirth >= 1
+    TurkeyBossSmartKillCheck = true,    -- Avoid wasting 15m on unkillable solo/low-DPS bosses; monitor TurkeyTop passively to rejoin if help arrives
+    TurkeyBossSoloProbeSec = 25,        -- Seconds to probe a fresh boss solo before returning to island if no other player joins
+    TurkeyBossKillMargin = 0.85,        -- Require projected (serverDps * secLeft) >= health * margin to stay/engage
     TurkeyBossMinShareStop = 0,         -- 0 = stay until boss dies/despawns; > 0 (e.g. 0.015) = leave once PumpkinTurkeyShare >= threshold
     TurkeyBossNoDamageTimeoutSec = 25,  -- Abort spawn if 0 share after 25s attacking without Cannon so farm is never stalled
     TurkeyBossStandOffset = 18,         -- Horizontal stand distance (studs) from boss center (inside 20-stud TapReach & 150-stud TurkeyReach)
@@ -266,7 +305,21 @@ local DEFAULT_CONFIG = {
         Gargantuan = true,
     },
     WebhookPollInterval = 1.0,          -- Snapshot poll interval (seconds)
-    WebhookSendTestOnStart = false,     -- Send one test notification on startup
+
+    -- Auto Mail (Send Only; continuous via EF_Relay, no fee cap by default)
+    AutoMail = false,                   -- Master toggle for Auto Send
+    MailUsernames = {},                 -- Recipient username(s): { "Acc1" } or "Acc1" (self-username auto-skipped)
+    MailItems = {},                     -- Whitelist: ["Name"] = Amount | "Max" | { Class, Amount, MinAmount, Keep } or "Class:Name"
+    MailMinDiamondsReserve = 100000,    -- Diamonds kept on account when sending Currency:Diamonds (actual fee added on top)
+    MailMaxFee = 0,                     -- 0 = unlimited (VIP or up to 5M cap); > 0 = pause send if current fee exceeds cap
+    MailMessage = "",                   -- "" avoids PS99's 60s server message cooldown (GUIs.Mailbox L592)
+    MailSendDelay = 2.2,                -- Delay (seconds) between consecutive EF_Relay sends
+    MailScanInterval = 10.0,            -- Inventory scan interval (seconds)
+    MailSkipLocked = true,              -- Skip locked items/pets (_lk / IsLocked)
+    MailSkipEquippedPets = true,        -- Subtract equipped pet counts (PetCmds.GetEquipped) & skip Daycare pets
+    MailRoundRobin = false,             -- false = send to first valid recipient; true = rotate recipient per send
+    MailWebhookEnabled = false,         -- Optional Discord webhook on sent mail (uses MailWebhookUrl or WebhookUrl)
+    MailWebhookUrl = "",                -- Optional dedicated Discord webhook URL for Mail logs
 }
 
 local function ApplyConfigDefaults(dst, src)
@@ -311,9 +364,7 @@ do
         end
     end
 end
-if not Config.Enabled then
-    return
-end
+if not Config.Enabled then return end
 
 -- ============================================================================
 -- 2. SERVICES & RUNTIME STATE
@@ -326,9 +377,7 @@ end
 while Config.Enabled and not game:IsLoaded() do
     task.wait(0.1)
 end
-if not Config.Enabled then
-    return
-end
+if not Config.Enabled then return end
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -345,9 +394,7 @@ while Config.Enabled and not LocalPlayer do
     task.wait(0.1)
     LocalPlayer = Players.LocalPlayer
 end
-if not Config.Enabled then
-    return
-end
+if not Config.Enabled then return end
 
 local SessionToken = HttpService:GenerateGUID(false)
 local Connections = {}
@@ -402,6 +449,9 @@ local Runtime = {
         MapDestroyedCount = 0,
         VisualsHiddenCount = 0,
         WebhookSent = 0,
+        MailSentCount = 0,
+        MailFailedCount = 0,
+        MailLastFee = 0,
     },
     Cache = {
         IslandBox = nil,
@@ -411,10 +461,10 @@ local Runtime = {
         CriticalButtons = nil,
         CriticalButtonsPart2 = nil,
         LastComplete2FailAt = 0,
+        Complete2Unsupported = false,
         LastRebirthFailAt = 0,
         EggCostCache = {},
-        EggBasePowerCache = {},
-        EggCommonEventDmgCache = {},
+        EggEventDmgCache = {},
         EarlyHatchedByEgg = {},
         EarlyCoinsSpentByEgg = {},
         ReserveEarlyEggCost = 0,
@@ -428,9 +478,8 @@ local Runtime = {
         TeamPowerSnapshotAt = 0,
         BoostConsumeCooldown = {},
         FruitConsumeCooldown = {},
+        FruitRejectBackoff = {},
         LastEarlyHatchLogAt = 0,
-        LastKeepInvoked = nil,
-        LastServerAutoMerchant = nil,
         LastAutoPlace = nil,
         PetSpeedHookActive = false,
         PetSpeedHookWrapper = nil,
@@ -443,7 +492,6 @@ local Runtime = {
         IdleTrackingScript = nil,
         IdleTrackingWatchBound = false,
         NetFireHookTarget = nil,
-        NetFireOrig = nil,
         LastRobloxAfkPulseAt = 0,
         LastP99AfkPulseAt = 0,
         LastP99SafeResetAt = 0,
@@ -531,12 +579,26 @@ local Runtime = {
         ActiveSighting = nil,
         WildSpeciesMap = nil,
         WildSlotCooldown = {},
+        WildRerollActive = false,
+        WildRerollSoldOutLogged = false,
         NetStoreShelfCache = nil,
         TurkeyBossActiveEndsAt = 0,
         TurkeyBossEngagedAt = 0,
         TurkeyBossSkippedEndsAt = 0,
         TurkeyBossReturnPos = nil,
         TurkeyBossLastHealth = nil,
+        TurkeyBossWatchedWindow = 0,
+        TurkeyBossProbedWindow = 0,
+        TurkeyBossLastMyDps = 0,
+        TurkeyBossTopRaw = nil,
+        TurkeyBossTopParsed = nil,
+        TurkeyBossOtherShareSum = 0,
+        TurkeyBossOtherActiveAt = 0,
+        TurkeyBossHpSampleAt = 0,
+        TurkeyBossHpSampleVal = nil,
+        TurkeyBossRejoinAfterAt = 0,
+        TurkeyBossLastPassiveLogAt = 0,
+        TurkeyBossLastPassiveLogKey = nil,
         MoveLockUntil = 0,
         MachineSessionDepth = 0,
         HatchYieldUntil = 0,
@@ -553,7 +615,13 @@ local Runtime = {
         KaitunUiToken = nil,
         WebhookThumbnails = {},
         WebhookWarnedState = nil,
-        WebhookStartupTestDone = false,
+        MailRecipientIdx = 0,
+        MailMessageCooldownUntil = 0,
+        MailFailCooldownByKey = {},
+        MailPetFirstSeen = {},
+        MailLastSkipLogAt = 0,
+        MailLastNoRecipientLogAt = 0,
+        MailInvDirty = true,
     },
     Helpers = {},
 }
@@ -574,9 +642,7 @@ local function Set3dRenderingSafe(enabled)
 end
 
 local function DestroyExistingKaitunGui(targetParent)
-    if not targetParent then
-        return
-    end
+    if not targetParent then return end
     local existing = targetParent:FindFirstChild(KAITUN_GUI_NAME)
     if existing then
         pcall(existing.Destroy, existing)
@@ -624,17 +690,13 @@ end
 getgenv()[GEN_KEY] = Runtime
 
 local function Log(level, fmt, ...)
-    if level == "DEBUG" and not Config.Debug then
-        return
-    end
+    if level == "DEBUG" and not Config.Debug then return end
     local ok, text = pcall(string.format, fmt, ...)
     print(string.format("[PumpkinKaitun][%s] %s", level, ok and text or tostring(fmt)))
 end
 
 local function BindConn(signal, fn)
-    if not signal then
-        return nil
-    end
+    if not signal then return nil end
     local conn = signal:Connect(fn)
     table.insert(Connections, conn)
     return conn
@@ -642,9 +704,7 @@ end
 
 function Runtime.Helpers.PruneConnections()
     local n = #Connections
-    if n == 0 then
-        return 0
-    end
+    if n == 0 then return 0 end
     local write = 1
     local removed = 0
     for i = 1, n do
@@ -677,38 +737,20 @@ end
 -- ============================================================================
 local function GetBootReadiness()
     local lib = ReplicatedStorage:FindFirstChild("Library")
-    if not lib then
-        return false, "Library"
-    end
-    if lib:GetAttribute("IsLoaded") ~= true then
-        return false, "Library.IsLoaded"
-    end
-    if not ReplicatedStorage:FindFirstChild("Assets") then
-        return false, "Assets"
-    end
+    if not lib then return false, "Library" end
+    if lib:GetAttribute("IsLoaded") ~= true then return false, "Library.IsLoaded" end
+    if not ReplicatedStorage:FindFirstChild("Assets") then return false, "Assets" end
     local things = Workspace:FindFirstChild("__THINGS")
-    if not things or not things:FindFirstChild("Instances") or not things:FindFirstChild("__INSTANCE_CONTAINER") then
-        return false, "Workspace.__THINGS"
-    end
-    if LocalPlayer:GetAttribute("__LOADED") ~= true then
-        return false, "LocalPlayer.__LOADED"
-    end
-    if not LocalPlayer:FindFirstChild("PlayerGui") then
-        return false, "PlayerGui"
-    end
+    if not things or not things:FindFirstChild("Instances") or not things:FindFirstChild("__INSTANCE_CONTAINER") then return false, "Workspace.__THINGS" end
+    if LocalPlayer:GetAttribute("__LOADED") ~= true then return false, "LocalPlayer.__LOADED" end
+    if not LocalPlayer:FindFirstChild("PlayerGui") then return false, "PlayerGui" end
     local clientFolder = lib:FindFirstChild("Client")
     local saveInst = clientFolder and clientFolder:FindFirstChild("Save")
-    if not saveInst then
-        return false, "SaveModule"
-    end
+    if not saveInst then return false, "SaveModule" end
     local okReq, saveMod = pcall(require, saveInst)
-    if not okReq or type(saveMod) ~= "table" or type(saveMod.Get) ~= "function" then
-        return false, "SaveApi"
-    end
+    if not okReq or type(saveMod) ~= "table" or type(saveMod.Get) ~= "function" then return false, "SaveApi" end
     local okData, saveData = pcall(saveMod.Get)
-    if not okData or type(saveData) ~= "table" then
-        return false, "SaveData"
-    end
+    if not okData or type(saveData) ~= "table" then return false, "SaveData" end
     return true, "Ready"
 end
 
@@ -738,23 +780,17 @@ local function WaitBootReady()
     return false
 end
 
-if not WaitBootReady() then
-    return
-end
+if not WaitBootReady() then return end
 
 local Library = ReplicatedStorage:FindFirstChild("Library") or ReplicatedStorage:WaitForChild("Library", 30)
 
 local function SafeRequire(parent, ...)
     local cur = parent
     for _, childName in ipairs({ ... }) do
-        if not cur then
-            return nil
-        end
+        if not cur then return nil end
         cur = cur:FindFirstChild(childName) or cur:WaitForChild(childName, 10)
     end
-    if not cur then
-        return nil
-    end
+    if not cur then return nil end
     local ok, mod = pcall(require, cur)
     return ok and mod or nil
 end
@@ -789,16 +825,16 @@ local Modules = {
     GlobalExistCmds = SafeRequire(Library, "Client", "GlobalExistCmds"),
     RAPCmds = SafeRequire(Library, "Client", "RAPCmds"),
     Directory = SafeRequire(Library, "Directory"),
-    Items = SafeRequire(Library, "Items"),
+    AbstractItem = SafeRequire(Library, "Items", "AbstractItem"),
     PetItem = SafeRequire(Library, "Items", "PetItem"),
-    LootboxItem = SafeRequire(Library, "Items", "LootboxItem"),
     MiscItem = SafeRequire(Library, "Items", "MiscItem"),
+    BalancingConstants = SafeRequire(Library, "Balancing", "Constants"),
+    MailboxTypes = SafeRequire(Library, "Types", "Mailbox"),
 
     -- PumpkinTycoon Types & Utils
     PumpkinTycoon = SafeRequire(Library, "Types", "PumpkinTycoon"),
     ButtonsTypes = SafeRequire(Library, "Types", "PumpkinTycoon", "Buttons"),
     ChaseTypes = SafeRequire(Library, "Types", "PumpkinTycoon", "Chase"),
-    LadderTypes = SafeRequire(Library, "Types", "PumpkinTycoon", "Ladder"),
     MerchantTypes = SafeRequire(Library, "Types", "PumpkinTycoon", "Merchant"),
     UpgradesTypes = SafeRequire(Library, "Types", "PumpkinTycoon", "Upgrades"),
     WildTypes = SafeRequire(Library, "Types", "PumpkinTycoon", "Wild"),
@@ -812,7 +848,6 @@ local Modules = {
     PumpkinEarnUtil = SafeRequire(Library, "Util", "PumpkinTycoonEarn"),
     PumpkinGiftUtil = SafeRequire(Library, "Util", "PumpkinTycoonGift"),
     PumpkinWildUtil = SafeRequire(Library, "Util", "PumpkinTycoonWild"),
-    PumpkinHuntUtil = SafeRequire(Library, "Util", "PumpkinTycoonHunt"),
     PumpkinStoreUtil = SafeRequire(Library, "Util", "PumpkinTycoonStore"),
     PumpkinSightingUtil = SafeRequire(Library, "Util", "PumpkinTycoonSighting"),
     PumpkinTurkeyUtil = SafeRequire(Library, "Util", "PumpkinTycoonTurkey"),
@@ -853,14 +888,10 @@ end
 
 local function EnsureCriticalModules()
     local missing = CollectMissingCriticalModules()
-    if #missing == 0 then
-        return true
-    end
+    if #missing == 0 then return true end
 
     for _ = 1, 5 do
-        if not IsRunning() then
-            return false
-        end
+        if not IsRunning() then return false end
         task.wait(0.5)
         missing = CollectMissingCriticalModules()
         if not PT_Cmds then
@@ -872,9 +903,7 @@ local function EnsureCriticalModules()
         if PT_Cmds and not PT_AutoBreak then
             PT_AutoBreak = SafeRequire(Library, "Client", "PumpkinTycoonCmds", "AutoBreak")
         end
-        if #missing == 0 then
-            return true
-        end
+        if #missing == 0 then return true end
     end
 
     table.sort(missing)
@@ -883,16 +912,12 @@ local function EnsureCriticalModules()
 end
 
 EnsureCriticalModules()
-if not IsRunning() then
-    return
-end
+if not IsRunning() then return end
 
 local NET_FIRE_HOOK_KEY = "_PumpkinTycoonKaitun_NetFireHookTarget"
 
 function Runtime.Helpers.DetectMobileAntiAfk()
-    if Runtime.Cache.AntiAfkEnv then
-        return Runtime.Cache.AntiAfkEnv
-    end
+    if Runtime.Cache.AntiAfkEnv then return Runtime.Cache.AntiAfkEnv end
     local isTouchOnly = false
     pcall(function()
         if UserInputService then
@@ -931,18 +956,14 @@ function Runtime.Helpers.GetEffectiveAntiAfkStrategy()
     if mode ~= "safe" and mode ~= "hook" then
         mode = "auto"
     end
-    if not Config.AntiAFK or not Config.AntiAFKP99 then
-        return mode, envInfo, false
-    end
+    if not Config.AntiAFK or not Config.AntiAFKP99 then return mode, envInfo, false end
     local idleDisabled = (Runtime.Cache.IdleTrackingDisabled == true)
     local useHookFallback = (mode == "hook") or (mode == "auto" and not envInfo.isMobile and not idleDisabled)
     return mode, envInfo, useHookFallback
 end
 
 local function PulseRobloxAntiAfk()
-    if not VirtualUser then
-        return false
-    end
+    if not VirtualUser then return false end
     local ok = pcall(function()
         VirtualUser:CaptureController()
         VirtualUser:ClickButton2(Vector2.zero)
@@ -956,23 +977,17 @@ end
 
 local function PulseP99AntiAfk()
     local _, _, useHookFallback = Runtime.Helpers.GetEffectiveAntiAfkStrategy()
-    if not useHookFallback then
-        return false
-    end
+    if not useHookFallback then return false end
     if not VirtualInputManager then
         local okVim, svc = pcall(game.GetService, game, "VirtualInputManager")
         if okVim and svc then
             VirtualInputManager = svc
         end
     end
-    if not VirtualInputManager or not VirtualInputManager.SendKeyEvent then
-        return false
-    end
+    if not VirtualInputManager or not VirtualInputManager.SendKeyEvent then return false end
     if UserInputService and UserInputService.GetFocusedTextBox then
         local okTb, focusedBox = pcall(UserInputService.GetFocusedTextBox, UserInputService)
-        if okTb and focusedBox ~= nil then
-            return false
-        end
+        if okTb and focusedBox ~= nil then return false end
     end
     local ok = pcall(function()
         VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.F15, false, game)
@@ -988,9 +1003,7 @@ end
 
 function Runtime.Helpers.PulseP99SafeIdleReset(isMobile)
     local net = Modules.Network
-    if not net or type(net.Fire) ~= "function" then
-        return false
-    end
+    if not net or type(net.Fire) ~= "function" then return false end
     local inputVal = isMobile and 7 or 0
     if Config.SpoofIdleFocusTrue then
         pcall(net.Fire, "Idle Tracking: Focus Changed", true)
@@ -1046,13 +1059,10 @@ local function RestoreAntiAfkNetworkHook()
     end
     Runtime.Cache.AntiAfkHookActive = false
     Runtime.Cache.NetFireHookTarget = nil
-    Runtime.Cache.NetFireOrig = nil
 end
 
 function Runtime.Helpers.DisableIdleScriptInstance(idleScript)
-    if not idleScript or not (idleScript:IsA("LocalScript") or idleScript:IsA("Script")) then
-        return false
-    end
+    if not idleScript or not (idleScript:IsA("LocalScript") or idleScript:IsA("Script")) then return false end
     pcall(function()
         idleScript.Disabled = true
     end)
@@ -1092,16 +1102,12 @@ function Runtime.Helpers.TryDisableIdleTracking()
     local scriptsFolder = ps and ps:FindFirstChild("Scripts")
     local coreFolder = scriptsFolder and scriptsFolder:FindFirstChild("Core")
     local idleScript = coreFolder and coreFolder:FindFirstChild("Idle Tracking")
-    if idleScript and Runtime.Helpers.DisableIdleScriptInstance(idleScript) then
-        return true
-    end
+    if idleScript and Runtime.Helpers.DisableIdleScriptInstance(idleScript) then return true end
 
     if not Runtime.Cache.IdleTrackingWatchBound and LocalPlayer then
         Runtime.Cache.IdleTrackingWatchBound = true
         local function attachCoreWatcher(core)
-            if not core then
-                return
-            end
+            if not core then return end
             BindConn(core.ChildAdded, function(child)
                 if IsRunning() and Config.AntiAFK and Config.AntiAFKP99 and child and child.Name == "Idle Tracking" then
                     if Runtime.Helpers.DisableIdleScriptInstance(child) then
@@ -1111,9 +1117,7 @@ function Runtime.Helpers.TryDisableIdleTracking()
             end)
         end
         local function attachScriptsWatcher(scripts)
-            if not scripts then
-                return
-            end
+            if not scripts then return end
             local c = scripts:FindFirstChild("Core")
             if c then
                 attachCoreWatcher(c)
@@ -1134,9 +1138,7 @@ function Runtime.Helpers.TryDisableIdleTracking()
             end
         end
         local function attachPlayerScriptsWatcher(playerScripts)
-            if not playerScripts then
-                return
-            end
+            if not playerScripts then return end
             local s = playerScripts:FindFirstChild("Scripts")
             if s then
                 attachScriptsWatcher(s)
@@ -1188,12 +1190,8 @@ local function EnsureAntiAfkNetworkHook()
         end)
     end
     local net = Modules.Network
-    if not net or type(net.Fire) ~= "function" or type(hookfunction) ~= "function" then
-        return
-    end
-    if Runtime.Cache.AntiAfkHookActive and Runtime.Cache.NetFireHookTarget == net.Fire then
-        return
-    end
+    if not net or type(net.Fire) ~= "function" or type(hookfunction) ~= "function" then return end
+    if Runtime.Cache.AntiAfkHookActive and Runtime.Cache.NetFireHookTarget == net.Fire then return end
 
     local existingRec = getgenv()[NET_FIRE_HOOK_KEY]
     if type(existingRec) == "table" and existingRec.installed == true and type(existingRec.orig) == "function" and existingRec.target == net.Fire then
@@ -1203,7 +1201,6 @@ local function EnsureAntiAfkNetworkHook()
         existingRec.log = Log
         existingRec.enabled = true
         Runtime.Cache.NetFireHookTarget = net.Fire
-        Runtime.Cache.NetFireOrig = existingRec.orig
         Runtime.Cache.AntiAfkHookActive = true
         Log("INFO", "PS99 Anti-AFK fallback hook re-armed.")
         return
@@ -1258,7 +1255,6 @@ local function EnsureAntiAfkNetworkHook()
         hookRec.orig = prev
         hookRec.installed = true
         Runtime.Cache.NetFireHookTarget = net.Fire
-        Runtime.Cache.NetFireOrig = prev
         Runtime.Cache.AntiAfkHookActive = true
         getgenv()[NET_FIRE_HOOK_KEY] = hookRec
         Log("INFO", "PS99 Idle Tracking & Move Server PC fallback hook enabled.")
@@ -1290,9 +1286,7 @@ local function SetupAntiAfk()
         tostring(useHookFallback))
 
     BindConn(LocalPlayer.Idled, function()
-        if not IsRunning() or not Config.AntiAFK then
-            return
-        end
+        if not IsRunning() or not Config.AntiAFK then return end
         if Config.AntiAFKRoblox then
             PulseRobloxAntiAfk()
         end
@@ -1315,9 +1309,7 @@ local function SetupAntiAfk()
         while IsRunning() do
             local _, curEnv, curHookFallback = Runtime.Helpers.GetEffectiveAntiAfkStrategy()
             task.wait(curHookFallback and 1 or 5)
-            if not IsRunning() then
-                break
-            end
+            if not IsRunning() then break end
             if not Runtime.Cache.IdleTrackingDisabled then
                 Runtime.Helpers.TryDisableIdleTracking()
             end
@@ -1359,9 +1351,7 @@ local function DisableNativeAutoFarmOnce()
 end
 
 local function ReleaseHeldPets()
-    if not Modules.PlayerPet or not Modules.PlayerPet.GetByPlayer then
-        return
-    end
+    if not Modules.PlayerPet or not Modules.PlayerPet.GetByPlayer then return end
     local releasedAny = false
     pcall(function()
         for _, pet in pairs(Modules.PlayerPet.GetByPlayer(LocalPlayer)) do
@@ -1381,13 +1371,9 @@ local HOOK_PET_SPEED_KEY = "_PumpkinTycoonKaitun_HookCalcPetSpeed"
 
 local function RefreshLocalPetSpeeds(useOriginalCalc)
     local pp = Modules.PlayerPet
-    if not pp or not pp.GetByPlayer then
-        return 0
-    end
+    if not pp or not pp.GetByPlayer then return 0 end
     local okPets, pets = pcall(pp.GetByPlayer, LocalPlayer)
-    if not okPets or type(pets) ~= "table" then
-        return 0
-    end
+    if not okPets or type(pets) ~= "table" then return 0 end
 
     local updated = 0
     local sampleMult = nil
@@ -1456,18 +1442,14 @@ end
 
 local function StepPetSpeedBuff()
     local pp = Modules.PlayerPet
-    if not pp or type(pp.CalculateSpeedMultiplier) ~= "function" then
-        return
-    end
+    if not pp or type(pp.CalculateSpeedMultiplier) ~= "function" then return end
     local env = getgenv()
     local orig = env[ORIG_PET_SPEED_KEY]
     if type(orig) ~= "function" and pp.CalculateSpeedMultiplier ~= env[HOOK_PET_SPEED_KEY] then
         orig = pp.CalculateSpeedMultiplier
         env[ORIG_PET_SPEED_KEY] = orig
     end
-    if type(orig) ~= "function" then
-        return
-    end
+    if type(orig) ~= "function" then return end
 
     if not Config.AutoBuffPetSpeed then
         if Runtime.Cache.PetSpeedHookActive or pp.CalculateSpeedMultiplier == env[HOOK_PET_SPEED_KEY] then
@@ -1479,13 +1461,9 @@ local function StepPetSpeedBuff()
     if not Runtime.Cache.PetSpeedCreatedConnBound and pp.Created and pp.Created.Connect then
         Runtime.Cache.PetSpeedCreatedConnBound = true
         BindConn(pp.Created, function(pet)
-            if not IsRunning() or not Config.AutoBuffPetSpeed then
-                return
-            end
+            if not IsRunning() or not Config.AutoBuffPetSpeed then return end
             task.defer(function()
-                if not IsRunning() or not Config.AutoBuffPetSpeed or not pet or pet.destroyed or pet.owner ~= LocalPlayer then
-                    return
-                end
+                if not IsRunning() or not Config.AutoBuffPetSpeed or not pet or pet.destroyed or pet.owner ~= LocalPlayer then return end
                 local targetMult = math.max(1, tonumber(Config.PetSpeedMultiplier) or 999)
                 if pet.speedMult ~= targetMult then
                     pet.speedMult = targetMult
@@ -1510,9 +1488,7 @@ local function StepPetSpeedBuff()
         myWrapper = function(petSelf, ...)
             if IsRunning() and Config.AutoBuffPetSpeed and petSelf and petSelf.owner == LocalPlayer then
                 local cfgMult = tonumber(Config.PetSpeedMultiplier)
-                if cfgMult and cfgMult > 0 then
-                    return cfgMult
-                end
+                if cfgMult and cfgMult > 0 then return cfgMult end
             end
             return orig(petSelf, ...)
         end
@@ -1581,9 +1557,7 @@ local TrackedContainers = setmetatable({}, { __mode = "k" })
 local HookedContainers = setmetatable({}, { __mode = "k" })
 
 local function TrackContainer(container)
-    if not container or TrackedContainers[container] then
-        return
-    end
+    if not container or TrackedContainers[container] then return end
     TrackedContainers[container] = true
     BindConn(container.Destroying, function()
         TrackedContainers[container] = nil
@@ -1592,9 +1566,7 @@ local function TrackContainer(container)
 end
 
 local function DestroyClutterInstance(inst, defer)
-    if not inst or not inst.Parent or inst.Name == SAFE_FLOOR_NAME or inst == Workspace then
-        return
-    end
+    if not inst or not inst.Parent or inst.Name == SAFE_FLOOR_NAME or inst == Workspace then return end
     Runtime.Stats.MapDestroyedCount = (Runtime.Stats.MapDestroyedCount or 0) + 1
     if defer then
         task.defer(function()
@@ -1608,12 +1580,8 @@ local function DestroyClutterInstance(inst, defer)
 end
 
 local function StripVisualObject(obj, stripCollision)
-    if not obj or not obj.Parent or obj.Name == SAFE_FLOOR_NAME then
-        return
-    end
-    if obj.Name == "Highlight" and obj.Parent and obj.Parent.Name == "RenderedEggs" then
-        return
-    end
+    if not obj or not obj.Parent or obj.Name == SAFE_FLOOR_NAME then return end
+    if obj.Name == "Highlight" and obj.Parent and obj.Parent.Name == "RenderedEggs" then return end
     if obj:IsA("BasePart") then
         local changed = false
         if obj.Transparency < 1 then
@@ -1677,9 +1645,7 @@ local function StripVisualObject(obj, stripCollision)
 end
 
 local function StripLocalCharacterFx(charModel)
-    if not charModel then
-        return
-    end
+    if not charModel then return end
     for _, d in ipairs(charModel:GetDescendants()) do
         if d:IsA("BasePart") then
             if d.CastShadow then
@@ -1699,9 +1665,7 @@ end
 
 function Runtime.Helpers.ClearVisualQueue()
     local q = Runtime.Cache.VisualStripQueue
-    if type(q) ~= "table" then
-        return
-    end
+    if type(q) ~= "table" then return end
     table.clear(q.items)
     table.clear(q.cols)
     table.clear(q.queued)
@@ -1710,15 +1674,11 @@ function Runtime.Helpers.ClearVisualQueue()
 end
 
 function Runtime.Helpers.EnsureVisualStripHeartbeat()
-    if Runtime.Cache.VisualStripHbBound then
-        return
-    end
+    if Runtime.Cache.VisualStripHbBound then return end
     Runtime.Cache.VisualStripHbBound = true
     BindConn(RunService.Heartbeat, function()
         local q = Runtime.Cache.VisualStripQueue
-        if not q or q.head > q.tail then
-            return
-        end
+        if not q or q.head > q.tail then return end
         if not IsRunning() or not Config.OptimizeMap or not Runtime.Cache.Is3dRenderingEnabled then
             Runtime.Helpers.ClearVisualQueue()
             return
@@ -1747,9 +1707,7 @@ function Runtime.Helpers.EnsureVisualStripHeartbeat()
                 end
             end
             processed = processed + 1
-            if processed >= 24 and (os.clock() - startAt) >= 0.0015 then
-                break
-            end
+            if processed >= 24 and (os.clock() - startAt) >= 0.0015 then break end
         end
 
         if q.head > q.tail then
@@ -1761,19 +1719,11 @@ function Runtime.Helpers.EnsureVisualStripHeartbeat()
 end
 
 function Runtime.Helpers.EnqueueVisualStrip(inst, stripCollision)
-    if not IsRunning() or not Config.OptimizeMap or not Runtime.Cache.Is3dRenderingEnabled then
-        return
-    end
-    if not inst or not inst.Parent or inst.Name == SAFE_FLOOR_NAME then
-        return
-    end
+    if not IsRunning() or not Config.OptimizeMap or not Runtime.Cache.Is3dRenderingEnabled then return end
+    if not inst or not inst.Parent or inst.Name == SAFE_FLOOR_NAME then return end
     local q = Runtime.Cache.VisualStripQueue
-    if not q or q.queued[inst] then
-        return
-    end
-    if (q.tail - q.head + 1) >= (q.maxSize or 2500) then
-        return
-    end
+    if not q or q.queued[inst] then return end
+    if (q.tail - q.head + 1) >= (q.maxSize or 2500) then return end
     Runtime.Helpers.EnsureVisualStripHeartbeat()
     q.tail = q.tail + 1
     q.items[q.tail] = inst
@@ -1782,19 +1732,13 @@ function Runtime.Helpers.EnqueueVisualStrip(inst, stripCollision)
 end
 
 local function HookContainerChildAdded(container, stripCollision, isIslandsFolder)
-    if not container or HookedContainers[container] then
-        return
-    end
+    if not container or HookedContainers[container] then return end
     HookedContainers[container] = true
     local myUidStr = isIslandsFolder and tostring(LocalPlayer.UserId) or nil
     BindConn(container.ChildAdded, function(child)
-        if not IsRunning() or not Config.OptimizeMap or not Runtime.Cache.Is3dRenderingEnabled then
-            return
-        end
+        if not IsRunning() or not Config.OptimizeMap or not Runtime.Cache.Is3dRenderingEnabled then return end
         if isIslandsFolder then
-            if not Config.HideIslandVisuals then
-                return
-            end
+            if not Config.HideIslandVisuals then return end
             local isMine = (child.Name == myUidStr)
             Runtime.Helpers.EnqueueVisualStrip(child, not isMine)
         else
@@ -1804,12 +1748,8 @@ local function HookContainerChildAdded(container, stripCollision, isIslandsFolde
 end
 
 local function StripContainerTree(container, stripCollision, watchChildren, forceResweep)
-    if not container or not container.Parent then
-        return
-    end
-    if not Runtime.Cache.Is3dRenderingEnabled then
-        return
-    end
+    if not container or not container.Parent then return end
+    if not Runtime.Cache.Is3dRenderingEnabled then return end
     local alreadyTracked = (TrackedContainers[container] == true)
     if alreadyTracked and not forceResweep then
         if watchChildren then
@@ -1827,9 +1767,7 @@ end
 
 function Runtime.Helpers.SweepDebris(debrisFolder)
     local folder = debrisFolder or Workspace:FindFirstChild("__DEBRIS")
-    if not folder or not folder.Parent then
-        return
-    end
+    if not folder or not folder.Parent then return end
     for _, child in ipairs(folder:GetChildren()) do
         if not child:IsA("Folder") and not DEBRIS_PRESERVE_NAMES[child.Name] and child.Name ~= SAFE_FLOOR_NAME then
             DestroyClutterInstance(child, false)
@@ -1838,18 +1776,14 @@ function Runtime.Helpers.SweepDebris(debrisFolder)
 end
 
 function Runtime.Helpers.ClearFolderChildrenOnce(folder)
-    if not folder or not folder.Parent then
-        return
-    end
+    if not folder or not folder.Parent then return end
     for _, child in ipairs(folder:GetChildren()) do
         DestroyClutterInstance(child, false)
     end
 end
 
 local function ApplyLightingAndEffectsOptimization()
-    if not Config.OptimizeLightingAndEffects then
-        return
-    end
+    if not Config.OptimizeLightingAndEffects then return end
     if not Runtime.Cache.SavedLightingState then
         local savedChildren = setmetatable({}, { __mode = "k" })
         for _, child in ipairs(Lighting:GetChildren()) do
@@ -1967,9 +1901,7 @@ local function ApplyLightingAndEffectsOptimization()
 end
 
 local function CleanOtherPlayerCharacter(model)
-    if not Runtime.Cache.Is3dRenderingEnabled or not model or model == LocalPlayer.Character or not model:IsA("Model") then
-        return
-    end
+    if not Runtime.Cache.Is3dRenderingEnabled or not model or model == LocalPlayer.Character or not model:IsA("Model") then return end
     local plr = Players:GetPlayerFromCharacter(model)
     local isOtherChar = (plr ~= nil and plr ~= LocalPlayer)
         or (model.Name ~= LocalPlayer.Name and model:FindFirstChildOfClass("Humanoid") ~= nil)
@@ -1979,9 +1911,7 @@ local function CleanOtherPlayerCharacter(model)
 end
 
 local function StripIslandsFolder(islands)
-    if not islands or not Runtime.Cache.Is3dRenderingEnabled then
-        return
-    end
+    if not islands or not Runtime.Cache.Is3dRenderingEnabled then return end
     local myUidStr = tostring(LocalPlayer.UserId)
     for _, islandModel in ipairs(islands:GetChildren()) do
         if not TrackedContainers[islandModel] then
@@ -2001,13 +1931,9 @@ local function EnsureSafeFloor(plot)
         Runtime.Cache.SafeFloorPart = nil
         return
     end
-    if not plot then
-        return
-    end
+    if not plot then return end
     local okCf, cf = pcall(plot.GetCFrame, plot)
-    if not okCf or typeof(cf) ~= "CFrame" then
-        return
-    end
+    if not okCf or typeof(cf) ~= "CFrame" then return end
 
     local floor = Runtime.Cache.SafeFloorPart
     if not floor or not floor.Parent then
@@ -2036,9 +1962,7 @@ local function EnsureSafeFloor(plot)
 end
 
 function Runtime.Helpers.ApplyUltraLowRamSettings()
-    if not Config.UltraLowRAM or Runtime.Cache.UltraLowRamApplied then
-        return
-    end
+    if not Config.UltraLowRAM or Runtime.Cache.UltraLowRamApplied then return end
     Runtime.Cache.UltraLowRamApplied = true
     if Modules.Variables then
         if Runtime.Cache.PrevPotatoMode == nil then
@@ -2054,9 +1978,9 @@ function Runtime.Helpers.ApplyUltraLowRamSettings()
         if (not okG or valStr ~= "On") and (not okV or valNum ~= 1) then
             needReduceOrbs = true
         end
-    elseif Modules.Save and Modules.Save.Get then
-        local okS, saveData = pcall(Modules.Save.Get)
-        local cur = okS and type(saveData) == "table" and saveData.Settings and saveData.Settings.ReduceOrbs
+    else
+        local saveData = Runtime.Helpers.GetSaveData and Runtime.Helpers.GetSaveData()
+        local cur = saveData and saveData.Settings and saveData.Settings.ReduceOrbs
         if cur ~= 1 then
             needReduceOrbs = true
         end
@@ -2069,13 +1993,9 @@ function Runtime.Helpers.ApplyUltraLowRamSettings()
 end
 
 local function RunMapOptimizerPass(plot)
-    if not Config.OptimizeMap then
-        return
-    end
+    if not Config.OptimizeMap then return end
     local inEvent = (plot ~= nil) or (Runtime.Helpers.IsInEventInstance and Runtime.Helpers.IsInEventInstance())
-    if not inEvent then
-        return
-    end
+    if not inEvent then return end
 
     local is3dOn = (Runtime.Cache.Is3dRenderingEnabled == true)
     local things = Workspace:FindFirstChild("__THINGS")
@@ -2151,9 +2071,7 @@ local function RunMapOptimizerPass(plot)
 end
 
 local function HookOtherPlayerEvents(plr)
-    if not plr or plr == LocalPlayer then
-        return
-    end
+    if not plr or plr == LocalPlayer then return end
     local charConns = Runtime.Cache.PlayerCharConns
     if charConns[plr] then
         pcall(charConns[plr].Disconnect, charConns[plr])
@@ -2170,9 +2088,7 @@ local function HookOtherPlayerEvents(plr)
 end
 
 local function SetupMapOptimizer()
-    if not Config.OptimizeMap then
-        return
-    end
+    if not Config.OptimizeMap then return end
     if Config.UltraLowRAM then
         Runtime.Helpers.ApplyUltraLowRamSettings()
     end
@@ -2198,20 +2114,14 @@ local function SetupMapOptimizer()
         end)
 
         BindConn(Workspace.ChildAdded, function(child)
-            if not IsRunning() or not Config.OptimizeMap or not child then
-                return
-            end
+            if not IsRunning() or not Config.OptimizeMap or not child then return end
             local inEvent = Runtime.Helpers.IsInEventInstance and Runtime.Helpers.IsInEventInstance()
-            if not inEvent then
-                return
-            end
+            if not inEvent then return end
             if Config.StripWorldClutter and WORLD_CLUTTER_NAMES[child.Name] then
                 task.defer(DestroyClutterInstance, child, false)
                 return
             end
-            if not Runtime.Cache.Is3dRenderingEnabled then
-                return
-            end
+            if not Runtime.Cache.Is3dRenderingEnabled then return end
             if Config.HideIslandVisuals and child.Name == "PumpkinTycoonIslands" then
                 StripIslandsFolder(child)
             elseif Config.HideIslandVisuals and (child.Name == "PumpkinTycoonPads" or child.Name == "PumpkinTycoonPumpkins") then
@@ -2250,18 +2160,12 @@ local function SetupMapOptimizer()
 end
 
 local function ScheduleMyIslandResweep()
-    if not Runtime.Cache.Is3dRenderingEnabled or not Config.OptimizeMap or not Config.HideIslandVisuals then
-        return
-    end
+    if not Runtime.Cache.Is3dRenderingEnabled or not Config.OptimizeMap or not Config.HideIslandVisuals then return end
     local token = (Runtime.Cache.MyIslandResweepToken or 0) + 1
     Runtime.Cache.MyIslandResweepToken = token
     task.delay(0.85, function()
-        if not IsRunning() or Runtime.Cache.MyIslandResweepToken ~= token then
-            return
-        end
-        if not Config.OptimizeMap or not Config.HideIslandVisuals or not Runtime.Cache.Is3dRenderingEnabled then
-            return
-        end
+        if not IsRunning() or Runtime.Cache.MyIslandResweepToken ~= token then return end
+        if not Config.OptimizeMap or not Config.HideIslandVisuals or not Runtime.Cache.Is3dRenderingEnabled then return end
         local islands = Workspace:FindFirstChild("PumpkinTycoonIslands")
         local myDecor = islands and islands:FindFirstChild(tostring(LocalPlayer.UserId))
         if myDecor then
@@ -2271,9 +2175,7 @@ local function ScheduleMyIslandResweep()
 end
 
 function Runtime.Helpers.On3dRenderingChanged(active)
-    if not IsRunning() then
-        return
-    end
+    if not IsRunning() then return end
     if not active then
         Runtime.Helpers.ClearVisualQueue()
         Runtime.Cache.MyIslandResweepToken = (Runtime.Cache.MyIslandResweepToken or 0) + 1
@@ -2286,9 +2188,7 @@ function Runtime.Helpers.On3dRenderingChanged(active)
 end
 
 local function StepMapOptimizer(plot)
-    if not Config.OptimizeMap then
-        return
-    end
+    if not Config.OptimizeMap then return end
     EnsureSafeFloor(plot)
 
     local now = os.clock()
@@ -2426,18 +2326,41 @@ Runtime.Teardown = function()
     Runtime.Cache.MoveLockUntil = 0
     Runtime.Cache.SightingHookBound = false
     Runtime.Cache.ActiveSighting = nil
+    Runtime.Cache.WildRerollActive = false
+    Runtime.Cache.WildRerollSoldOutLogged = false
+    Runtime.Cache.Complete2Unsupported = false
     Runtime.Cache.NetStoreShelfCache = nil
     Runtime.Cache.TurkeyBossActiveEndsAt = 0
     Runtime.Cache.TurkeyBossEngagedAt = 0
     Runtime.Cache.TurkeyBossSkippedEndsAt = 0
     Runtime.Cache.TurkeyBossReturnPos = nil
     Runtime.Cache.TurkeyBossLastHealth = nil
+    Runtime.Cache.TurkeyBossWatchedWindow = 0
+    Runtime.Cache.TurkeyBossProbedWindow = 0
+    Runtime.Cache.TurkeyBossLastMyDps = 0
+    Runtime.Cache.TurkeyBossTopRaw = nil
+    Runtime.Cache.TurkeyBossTopParsed = nil
+    Runtime.Cache.TurkeyBossOtherShareSum = 0
+    Runtime.Cache.TurkeyBossOtherActiveAt = 0
+    Runtime.Cache.TurkeyBossHpSampleAt = 0
+    Runtime.Cache.TurkeyBossHpSampleVal = nil
+    Runtime.Cache.TurkeyBossRejoinAfterAt = 0
+    Runtime.Cache.TurkeyBossLastPassiveLogAt = 0
+    Runtime.Cache.TurkeyBossLastPassiveLogKey = nil
     Runtime.Stats.FightingTurkeyBoss = false
     Runtime.Stats.TurkeyBossShare = 0
     Runtime.Stats.TurkeyBossHealth = 0
     Runtime.Stats.TurkeyBossMaxHealth = 0
     if type(Runtime.Cache.WildSlotCooldown) == "table" then
         table.clear(Runtime.Cache.WildSlotCooldown)
+    end
+    Runtime.Cache.MailRecipientIdx = 0
+    Runtime.Cache.MailMessageCooldownUntil = 0
+    if type(Runtime.Cache.MailFailCooldownByKey) == "table" then
+        table.clear(Runtime.Cache.MailFailCooldownByKey)
+    end
+    if type(Runtime.Cache.MailPetFirstSeen) == "table" then
+        table.clear(Runtime.Cache.MailPetFirstSeen)
     end
     Log("INFO", "Previous session cleaned up.")
 end
@@ -2448,41 +2371,8 @@ getgenv()[GEN_KEY] = Runtime
 -- ============================================================================
 local PT = Modules.PumpkinTycoon
 local INSTANCE_ID = (PT and PT.INSTANCE_ID) or "PumpkinTycoon"
-local NET = (PT and PT.NET) or {
-    Buy = "NZ_Commit",
-    BuyBand = "FZ_Reserve",
-    BuyNet = "ZK_Barter",
-    Cannon = "TC_Launch",
-    CatchSighting = "PV_Glimpse",
-    CatchWild = "RU_Ensnare",
-    CocoaBuyTime = "VB_Extend",
-    Complete = "BT_Settle",
-    Complete2 = "MH_Conclude",
-    GiftOpen = "YR_Hydrate",
-    NetShelf = "QS_Survey",
-    PlaceStock = "XC_Allocate",
-    Rebirth = "EW_Renew",
-    SetAutoBreak = "QW_Policy",
-    SetAutoMerchant = "HM_Sustain",
-    SetAutoNets = "GN_Restock",
-    SetAutoPlace = "JD_Prefer",
-    SetHunt = "LF_Pursue",
-    SetLock = "KT_Shelter",
-    TutorialDone = "WL_Recall",
-    UpgradeBuy = "OQ_Advance",
-}
-local VAR = (PT and PT.VAR) or {
-    Buttons = "Buttons",
-    Pedestals = "Pedestals",
-    Stock = "Stock",
-    Merchant = "Merchant",
-    AutoBreak = "AutoBreak",
-    Tutorial = "Tutorial",
-    Rebirths = "Rebirths",
-    CannonEver = "CannonEver",
-    Wild = "Wild",
-    Hunt = "Hunt",
-}
+local NET = (PT and PT.NET) or {}
+local VAR = (PT and PT.VAR) or {}
 
 local function GetCharacter()
     local char = LocalPlayer.Character
@@ -2502,9 +2392,7 @@ local function WaitReady()
             return Modules.Save and Modules.Save.Get and Modules.Save.Get()
         end)
 
-        if loadedAttr and hasGui and hrp and saveOk and type(saveData) == "table" then
-            return true
-        end
+        if loadedAttr and hasGui and hrp and saveOk and type(saveData) == "table" then return true end
 
         local elapsed = os.clock() - startAt
         if (lastLogAt == 0 and elapsed >= 2) or (lastLogAt > 0 and elapsed - lastLogAt >= 15) then
@@ -2528,13 +2416,9 @@ end
 
 local function MoveNear(targetPos, minThreshold)
     local _, hrp = GetCharacter()
-    if not hrp or not targetPos then
-        return false
-    end
+    if not hrp or not targetPos then return false end
     local dist = HorizontalDist(hrp.Position, targetPos)
-    if dist <= (minThreshold or 14) then
-        return true
-    end
+    if dist <= (minThreshold or 14) then return true end
     -- Offset cleanly on the same Y+2 plane to avoid lodging inside models
     hrp.CFrame = CFrame.new(targetPos + Vector3.new(0, 2.5, 4))
     Runtime.Cache.LastTeleportAt = os.clock()
@@ -2559,12 +2443,8 @@ end
 --- Close a machine UI modal only when TabController confirms that specific machine tab is open.
 local function CloseMachineTab(machineName)
     local tc = Modules.TabController
-    if not tc or type(machineName) ~= "string" then
-        return
-    end
-    if type(tc.IsOpen) ~= "function" or type(tc.CloseTab) ~= "function" then
-        return
-    end
+    if not tc or type(machineName) ~= "string" then return end
+    if type(tc.IsOpen) ~= "function" or type(tc.CloseTab) ~= "function" then return end
     local okOpen, isOpen = pcall(tc.IsOpen, machineName)
     if okOpen and isOpen == true then
         pcall(tc.CloseTab)
@@ -2619,17 +2499,11 @@ local function WithMachineSession(callback)
 end
 
 local function EnsureNearMachinePad(plot, machineName, rangeFn, standOnPad)
-    if not plot or not machineName or not Modules.PumpkinButtonsUtil or not Modules.PumpkinButtonsUtil.MachinePad then
-        return false
-    end
+    if not plot or not machineName or not Modules.PumpkinButtonsUtil or not Modules.PumpkinButtonsUtil.MachinePad then return false end
     local okPlot, plotModel = pcall(plot.GetModel, plot)
-    if not okPlot or not plotModel then
-        return false
-    end
+    if not okPlot or not plotModel then return false end
     local pad = Modules.PumpkinButtonsUtil.MachinePad(plotModel, machineName)
-    if not pad or not pad:IsA("BasePart") then
-        return false
-    end
+    if not pad or not pad:IsA("BasePart") then return false end
     local range = 20
     if type(rangeFn) == "number" and rangeFn >= 6 then
         range = rangeFn
@@ -2641,9 +2515,7 @@ local function EnsureNearMachinePad(plot, machineName, rangeFn, standOnPad)
     end
     local moveDist = standOnPad and 2.5 or math.clamp(range - 8, 4, 12)
     local _, hrp = GetCharacter()
-    if not hrp then
-        return false
-    end
+    if not hrp then return false end
     ExtendMachineSession(4.0)
     local needMove = HorizontalDist(hrp.Position, pad.Position) > moveDist
         or math.abs(hrp.Position.Y - pad.Position.Y) > 6
@@ -2668,9 +2540,7 @@ local function EnsureNearMachinePad(plot, machineName, rangeFn, standOnPad)
         task.wait(waitLeft)
     end
     _, hrp = GetCharacter()
-    if not hrp or (hrp.Position - pad.Position).Magnitude > (range - 1) then
-        return false
-    end
+    if not hrp or (hrp.Position - pad.Position).Magnitude > (range - 1) then return false end
     return true
 end
 
@@ -2705,14 +2575,83 @@ end
 local function GetCurrency(currencyId)
     if Modules.CurrencyCmds and Modules.CurrencyCmds.Get then
         local ok, val = pcall(Modules.CurrencyCmds.Get, currencyId)
-        if ok and type(val) == "number" then
-            return val
-        end
+        if ok and type(val) == "number" then return val end
     end
     return 0
 end
 
 Runtime.Helpers = Runtime.Helpers or {}
+
+function Runtime.Helpers.GetSaveData()
+    if not Modules.Save or type(Modules.Save.Get) ~= "function" then return nil end
+    local ok, saveData = pcall(Modules.Save.Get)
+    return (ok and type(saveData) == "table") and saveData or nil
+end
+
+function Runtime.Helpers.GetSaveInventory(subKey)
+    local saveData = Runtime.Helpers.GetSaveData()
+    local inv = saveData and saveData.Inventory
+    local tbl = type(inv) == "table" and inv[subKey] or nil
+    return type(tbl) == "table" and tbl or nil
+end
+
+function Runtime.Helpers.GetChaseCategory(petId, pd)
+    if type(pd) == "table" then
+        if pd.gargantuan == true then return "Gargantuan" end
+        if pd.titanic == true then return "Titanic" end
+        if pd.huge == true then return "Huge" end
+    end
+    if type(petId) == "string" then
+        if string.sub(petId, 1, 11) == "Gargantuan " then return "Gargantuan" end
+        if string.sub(petId, 1, 8) == "Titanic " then return "Titanic" end
+        if string.sub(petId, 1, 5) == "Huge " then return "Huge" end
+    end
+    return nil
+end
+
+function Runtime.Helpers.GetMaxEquippedPets()
+    if Modules.PetCmds and type(Modules.PetCmds.GetMaxEquipped) == "function" then
+        local ok, m = pcall(Modules.PetCmds.GetMaxEquipped)
+        if ok and type(m) == "number" and m >= 1 then return math.floor(m) end
+    end
+    return 4
+end
+
+function Runtime.Helpers.FormatCommas(value, invalidFallback)
+    if type(value) ~= "number" or value ~= value or value == math.huge or value == -math.huge then
+        return invalidFallback or "0"
+    end
+    local digits = string.format("%.0f", math.floor(value))
+    return (digits:reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", ""))
+end
+
+function Runtime.Helpers.GetGiftItemName()
+    return (Modules.PumpkinGiftUtil and Modules.PumpkinGiftUtil.ID)
+        or (Modules.ButtonsTypes and Modules.ButtonsTypes.COMPLETION_GIFT)
+        or "Flannel Gift"
+end
+
+function Runtime.Helpers.ScanFlannelGiftBag(boxesOverride)
+    local giftName = Runtime.Helpers.GetGiftItemName()
+    local boxes = boxesOverride ~= nil and boxesOverride or Runtime.Helpers.GetSaveInventory("Lootbox")
+    if type(boxes) ~= "table" or next(boxes) == nil then
+        return giftName, nil, 0, 0
+    end
+    local firstUid, firstAmt, total = nil, 0, 0
+    for uid, d in pairs(boxes) do
+        if type(d) == "table" and (d.id == giftName or d._id == giftName) then
+            local am = math.max(0, math.floor(tonumber(d._am) or 1))
+            if am >= 1 then
+                total = total + am
+                if not firstUid then
+                    firstUid = tostring(uid)
+                    firstAmt = am
+                end
+            end
+        end
+    end
+    return giftName, firstUid, firstAmt, total
+end
 
 function Runtime.Helpers.RecordCoinsSpent(amount)
     local amt = tonumber(amount)
@@ -2723,9 +2662,7 @@ end
 
 function Runtime.Helpers.GetWindowCps(lookbackSec)
     local samples = Runtime.Cache.CoinRateSamples
-    if type(samples) ~= "table" or #samples < 2 then
-        return 0, 0
-    end
+    if type(samples) ~= "table" or #samples < 2 then return 0, 0 end
     local latest = samples[#samples]
     local cutoff = latest.t - math.max(1, tonumber(lookbackSec) or 60)
     local base = samples[1]
@@ -2738,9 +2675,7 @@ function Runtime.Helpers.GetWindowCps(lookbackSec)
         base = s
     end
     local dt = latest.t - base.t
-    if dt < 1 then
-        return 0, dt
-    end
+    if dt < 1 then return 0, dt end
     return math.max(0, (latest.cum - base.cum) / dt), dt
 end
 
@@ -2781,9 +2716,7 @@ function Runtime.Helpers.IsIncomeSustainedForCocoa(minCps)
     local minSampleSec = math.max(10, tonumber(Config.CocoaIncomeMinSampleSec) or 45)
     local longCps, longSpan = Runtime.Helpers.GetWindowCps(60)
     local shortCps, shortSpan = Runtime.Helpers.GetWindowCps(20)
-    if longSpan < minSampleSec or shortSpan < 10 then
-        return false, longCps
-    end
+    if longSpan < minSampleSec or shortSpan < 10 then return false, longCps end
     return (longCps >= minCps and shortCps >= (minCps * 0.85)), longCps
 end
 
@@ -2821,9 +2754,7 @@ function Runtime.Helpers.InvalidatePlotSave(plot, key)
 end
 
 function Runtime.Helpers.GetPlotSave(plot, key, forceRefresh)
-    if not plot or type(key) ~= "string" then
-        return nil, 0
-    end
+    if not plot or type(key) ~= "string" then return nil, 0 end
     if Runtime.Cache.PlotSavePlot ~= plot then
         Runtime.Cache.PlotSavePlot = plot
         table.clear(Runtime.Cache.PlotSaveEntries)
@@ -2856,9 +2787,7 @@ function Runtime.Helpers.GetPlotSave(plot, key, forceRefresh)
         local okSig, sig = pcall(plot.SaveChanged, plot, key)
         if okSig and sig and type(sig.Connect) == "function" then
             BindConn(sig, function()
-                if Runtime.Cache.PlotSavePlot ~= plot then
-                    return
-                end
+                if Runtime.Cache.PlotSavePlot ~= plot then return end
                 entry.dirty = true
                 entry.at = 0
                 entry.ver = (entry.ver or 0) + 1
@@ -2874,9 +2803,7 @@ function Runtime.Helpers.GetPlotSave(plot, key, forceRefresh)
     end
 
     local now = os.clock()
-    if not forceRefresh and entry.hasVal and not entry.dirty and (now - entry.at) < 1.5 then
-        return entry.val, entry.ver
-    end
+    if not forceRefresh and entry.hasVal and not entry.dirty and (now - entry.at) < 1.5 then return entry.val, entry.ver end
 
     local okSave, res = pcall(plot.Save, plot, key)
     if okSave then
@@ -2890,13 +2817,9 @@ function Runtime.Helpers.GetPlotSave(plot, key, forceRefresh)
 end
 
 function Runtime.Helpers.HasCraftMachineUnlocked(machineName, plot, buttons)
-    if Config.CraftRequireButtonComplete == false then
-        return true
-    end
+    if Config.CraftRequireButtonComplete == false then return true end
     local btnState = buttons or (plot and Runtime.Helpers.GetPlotSave(plot, VAR.Buttons))
-    if not btnState or not Modules.PumpkinButtonsUtil or not Modules.PumpkinButtonsUtil.Owned then
-        return false
-    end
+    if not btnState or not Modules.PumpkinButtonsUtil or not Modules.PumpkinButtonsUtil.Owned then return false end
     return Modules.PumpkinButtonsUtil.Owned(btnState, machineName) == true
 end
 
@@ -2906,9 +2829,7 @@ local function GetFlag(keyName, fallback)
         local k = FFlags.Keys[keyName]
         if k ~= nil then
             local ok, v = pcall(FFlags.Get, k)
-            if ok and v ~= nil then
-                return v
-            end
+            if ok and v ~= nil then return v end
         end
     end
     return fallback
@@ -2917,48 +2838,34 @@ end
 local function IsInEventInstance()
     if Modules.InstancingCmds and Modules.InstancingCmds.IsInInstance then
         local ok, inside = pcall(Modules.InstancingCmds.IsInInstance, INSTANCE_ID)
-        if ok and inside == true then
-            return true
-        end
+        if ok and inside == true then return true end
     end
     if Modules.InstancingCmds and Modules.InstancingCmds.Get then
         local ok, info = pcall(Modules.InstancingCmds.Get)
-        if ok and type(info) == "table" and info.instanceID == INSTANCE_ID then
-            return true
-        end
+        if ok and type(info) == "table" and info.instanceID == INSTANCE_ID then return true end
     end
     return LocalPlayer:GetAttribute("InstanceId") == INSTANCE_ID
 end
 Runtime.Helpers.IsInEventInstance = IsInEventInstance
 
 local function GetMyPlot()
-    if not Modules.ClientPlot or not Modules.ClientPlot.GetByPlayer then
-        return nil
-    end
+    if not Modules.ClientPlot or not Modules.ClientPlot.GetByPlayer then return nil end
     local ok, plot = pcall(Modules.ClientPlot.GetByPlayer, LocalPlayer)
     if ok and plot and not plot:IsDestroyed() then
         local dir = plot:GetDirectory()
         local dirId = type(dir) == "table" and (dir._id or dir.SaveId) or dir
         local targetDir = (PT and PT.PLOT_DIR) or INSTANCE_ID
-        if dirId == targetDir or dirId == INSTANCE_ID then
-            return plot
-        end
+        if dirId == targetDir or dirId == INSTANCE_ID then return plot end
     end
     return nil
 end
 
 local function GetIslandBox(plot)
-    if not plot then
-        return nil
-    end
+    if not plot then return nil end
     local now = os.clock()
-    if Runtime.Cache.IslandBox and (now - Runtime.Cache.IslandBoxAt < 2.0) then
-        return Runtime.Cache.IslandBox
-    end
+    if Runtime.Cache.IslandBox and (now - Runtime.Cache.IslandBoxAt < 2.0) then return Runtime.Cache.IslandBox end
     local model = plot:GetModel()
-    if not model then
-        return nil
-    end
+    if not model then return nil end
     local cf, size = model:GetBoundingBox()
     Runtime.Cache.IslandBox = { cf = cf, size = size, model = model }
     Runtime.Cache.IslandBoxAt = now
@@ -2966,15 +2873,9 @@ local function GetIslandBox(plot)
 end
 
 local function IsOnMyIsland(model, islandBox)
-    if not model or not model.Parent then
-        return false
-    end
-    if model:GetAttribute("OwnerUsername") == LocalPlayer.Name then
-        return true
-    end
-    if islandBox and PT and PT.OnIsland then
-        return PT.OnIsland(islandBox.cf, islandBox.size, model:GetPivot().Position)
-    end
+    if not model or not model.Parent then return false end
+    if model:GetAttribute("OwnerUsername") == LocalPlayer.Name then return true end
+    if islandBox and PT and PT.OnIsland then return PT.OnIsland(islandBox.cf, islandBox.size, model:GetPivot().Position) end
     return false
 end
 
@@ -2984,9 +2885,7 @@ function Runtime.Helpers.IsPlotPart2Active(plot)
         local ok, res = pcall(PT_Cmds.Part2)
         flagOn = ok and res == true
     end
-    if not flagOn then
-        return false
-    end
+    if not flagOn then return false end
     if plot and type(plot.GetModel) == "function" then
         local okM, model = pcall(plot.GetModel, plot)
         if okM and model then
@@ -2998,9 +2897,7 @@ function Runtime.Helpers.IsPlotPart2Active(plot)
 end
 
 local function GetZoneCount(plot)
-    if Runtime.Helpers.IsPlotPart2Active(plot) then
-        return #(PT and PT.ZONES or {})
-    end
+    if Runtime.Helpers.IsPlotPart2Active(plot) then return #(PT and PT.ZONES or {}) end
     return (PT and PT.PART1_ZONES) or 5
 end
 
@@ -3059,9 +2956,7 @@ end
 local function EnsureInPumpkinTycoon()
     if IsInEventInstance() then
         local plot = GetMyPlot()
-        if plot then
-            return plot
-        end
+        if plot then return plot end
         Runtime.Stats.Phase = "Waiting Plot"
         local waitDeadline = os.clock() + 5
         while IsRunning() and IsInEventInstance() and os.clock() < waitDeadline do
@@ -3074,12 +2969,8 @@ local function EnsureInPumpkinTycoon()
         end
         return nil
     end
-    if not Config.AutoJoin then
-        return nil
-    end
-    if os.clock() - (Runtime.Cache.LastJoinAttemptAt or 0) < 3.0 then
-        return nil
-    end
+    if not Config.AutoJoin then return nil end
+    if os.clock() - (Runtime.Cache.LastJoinAttemptAt or 0) < 3.0 then return nil end
     Runtime.Cache.LastJoinAttemptAt = os.clock()
 
     Runtime.Stats.Phase = "Entering PumpkinTycoon"
@@ -3105,20 +2996,14 @@ local function EnsureInPumpkinTycoon()
 end
 
 local function StepTutorial(plot)
-    if not Config.AutoTutorial or not plot then
-        return
-    end
-    if Runtime.Cache.TutorialDonePlot == plot then
-        return
-    end
+    if not Config.AutoTutorial or not plot then return end
+    if Runtime.Cache.TutorialDonePlot == plot then return end
     if Runtime.Helpers.GetPlotSave(plot, VAR.Tutorial) == true then
         Runtime.Cache.TutorialDonePlot = plot
         return
     end
     local now = os.clock()
-    if now - (Runtime.Cache.LastTutorialInvokeAt or 0) < 5 then
-        return
-    end
+    if now - (Runtime.Cache.LastTutorialInvokeAt or 0) < 5 then return end
     Runtime.Cache.LastTutorialInvokeAt = now
     local ok = pcall(plot.Invoke, plot, NET.TutorialDone)
     if ok then
@@ -3135,18 +3020,14 @@ function Runtime.Helpers.GetRungBaseCps(rung)
     local earn = Modules.PumpkinEarnUtil
     if earn and type(earn.Config) == "function" then
         local ok, cfg = pcall(earn.Config)
-        if ok and type(cfg) == "table" and type(cfg.Cps) == "table" and type(cfg.Cps[r]) == "number" then
-            return cfg.Cps[r]
-        end
+        if ok and type(cfg) == "table" and type(cfg.Cps) == "table" and type(cfg.Cps[r]) == "number" then return cfg.Cps[r] end
     end
     local fb = { 0.02, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 6 }
     return fb[r] or 0.02
 end
 
 function Runtime.Helpers.ComputePedestalEarnScore(standing)
-    if type(standing) ~= "table" then
-        return 0
-    end
+    if type(standing) ~= "table" then return 0 end
     local r = math.clamp(math.floor(tonumber(standing.R) or 1), 1, 8)
     local earn = Modules.PumpkinEarnUtil
     if earn and type(earn.Config) == "function" and type(earn.VariantMult) == "function" then
@@ -3154,9 +3035,7 @@ function Runtime.Helpers.ComputePedestalEarnScore(standing)
         if okC and type(cfg) == "table" and type(cfg.Cps) == "table" then
             local base = tonumber(cfg.Cps[r]) or Runtime.Helpers.GetRungBaseCps(r)
             local okV, vm = pcall(earn.VariantMult, cfg, standing)
-            if okV and type(vm) == "number" and vm > 0 then
-                return base * vm
-            end
+            if okV and type(vm) == "number" and vm > 0 then return base * vm end
         end
     end
     local base = Runtime.Helpers.GetRungBaseCps(r)
@@ -3166,9 +3045,7 @@ end
 
 local function AnalyzePedestals(plot)
     local raw, ver = Runtime.Helpers.GetPlotSave(plot, VAR.Pedestals)
-    if Runtime.Cache.PedInfoCache and Runtime.Cache.PedInfoVer == ver and Runtime.Cache.PlotSavePlot == plot then
-        return Runtime.Cache.PedInfoCache
-    end
+    if Runtime.Cache.PedInfoCache and Runtime.Cache.PedInfoVer == ver and Runtime.Cache.PlotSavePlot == plot then return Runtime.Cache.PedInfoCache end
 
     local maxPed = (PT and PT.MAX_PEDESTALS) or 8
     local unlockedIndices = {}
@@ -3206,12 +3083,8 @@ local function AnalyzePedestals(plot)
     end
 
     table.sort(lockedList, function(a, b)
-        if a.earnScore ~= b.earnScore then
-            return a.earnScore < b.earnScore
-        end
-        if a.rung ~= b.rung then
-            return a.rung < b.rung
-        end
+        if a.earnScore ~= b.earnScore then return a.earnScore < b.earnScore end
+        if a.rung ~= b.rung then return a.rung < b.rung end
         return a.index < b.index
     end)
 
@@ -3229,30 +3102,22 @@ local function AnalyzePedestals(plot)
 end
 
 local function ComputeMinFarmPedestals(unlockedCount, part2AutoKeep)
-    if unlockedCount <= 1 then
-        return unlockedCount
-    end
-    if type(Config.MinFarmPedestals) == "number" then
-        return math.clamp(math.floor(Config.MinFarmPedestals), 1, math.max(1, unlockedCount - 1))
-    end
-    if part2AutoKeep then
-        return math.clamp(math.floor(tonumber(Config.Part2MinFarmPedestals) or 1), 1, math.max(1, unlockedCount - 1))
-    end
+    if unlockedCount <= 1 then return unlockedCount end
+    if type(Config.MinFarmPedestals) == "number" then return math.clamp(math.floor(Config.MinFarmPedestals), 1, math.max(1, unlockedCount - 1)) end
+    if part2AutoKeep then return math.clamp(math.floor(tonumber(Config.Part2MinFarmPedestals) or 1), 1, math.max(1, unlockedCount - 1)) end
     return (unlockedCount >= 5) and 2 or 1
 end
 
 local function GetServerMaxBelow()
     if PT_AutoBreak and PT_AutoBreak.MaxBelow then
         local ok, m = pcall(PT_AutoBreak.MaxBelow)
-        if ok and type(m) == "number" then
-            return m
-        end
+        if ok and type(m) == "number" then return m end
     end
     local f = tonumber(GetFlag("PumpkinTycoon_AutoBreakFreeBelow", 8))
     return f or 8
 end
 
-local function GetKeepLockSettings(maxAllowed, unlockedCount, plot, buttons)
+local function GetKeepLockSettings(maxAllowed, unlockedCount, plot, buttons, tycoonComplete)
     local limit = type(maxAllowed) == "number" and math.max(0, math.floor(maxAllowed)) or 8
     local keepDesired = math.clamp(math.floor(tonumber(Config.KeepRung) or 0), 0, limit)
     if keepDesired == 1 then
@@ -3260,6 +3125,7 @@ local function GetKeepLockSettings(maxAllowed, unlockedCount, plot, buttons)
     end
 
     local part2AutoKeep = false
+    local smartLuckMode = false
     if keepDesired == 0 and Config.AutoKeepPart2Pedestals ~= false then
         local p = plot or GetMyPlot()
         local btns = buttons or Runtime.Cache.Buttons
@@ -3267,6 +3133,10 @@ local function GetKeepLockSettings(maxAllowed, unlockedCount, plot, buttons)
         if z6Owned and p and Runtime.Helpers.IsPlotPart2Active(p) then
             keepDesired = math.clamp(math.floor(tonumber(Config.Part2KeepMinRung) or 4), 2, limit)
             part2AutoKeep = true
+            local isComplete = (tycoonComplete ~= nil) and (tycoonComplete == true) or (Runtime.Stats.TycoonComplete == true)
+            if isComplete and Config.PostCompleteSmartLuckLock ~= false then
+                smartLuckMode = true
+            end
         end
     end
 
@@ -3285,41 +3155,89 @@ local function GetKeepLockSettings(maxAllowed, unlockedCount, plot, buttons)
         maxKeepSlots = math.max(0, unlockedCount - minFarm)
     end
 
-    return keepDesired, lockMin, maxKeepSlots, part2AutoKeep
+    return keepDesired, lockMin, maxKeepSlots, part2AutoKeep, smartLuckMode
 end
 
-local function IsProtectedForLockQueue(pedInfo, maxKeepSlots, pedIdx, rung, cachedLockMin)
+local PUMPKIN_LUCK_FALLBACK = { 1, 2, 4, 8, 15, 30, 60, 120 }
+
+function Runtime.Helpers.GetPumpkinLuckConfig()
+    local pe = Modules.PumpkinEarnUtil
+    if pe and type(pe.Config) == "function" then
+        local ok, cfg = pcall(pe.Config)
+        if ok and type(cfg) == "table" and type(cfg.Luck) == "table" then
+            return cfg.Luck, tonumber(cfg.PumpkinLuckCap) or 100
+        end
+    end
+    return PUMPKIN_LUCK_FALLBACK, 100
+end
+
+function Runtime.Helpers.ComputeSmartLuckKeepSet(pedInfo, lockMin, maxKeepSlots)
+    local keepSet = {}
+    local keepList = {}
+    if not pedInfo or type(pedInfo.occupied) ~= "table" or maxKeepSlots <= 0 then
+        return keepSet, keepList, 0, 100
+    end
+
+    local luckLadder, luckCap = Runtime.Helpers.GetPumpkinLuckConfig()
+    local eligible = {}
+    for _, occ in ipairs(pedInfo.occupied) do
+        local r = tonumber(occ.rung) or 1
+        if r >= math.max(2, lockMin or 4) then
+            local lk = tonumber(luckLadder[math.clamp(r, 1, #luckLadder)]) or 0
+            if lk > 0 then
+                table.insert(eligible, {
+                    index = occ.index,
+                    rung = r,
+                    luck = lk,
+                    earnScore = occ.earnScore or 0,
+                    locked = occ.locked == true,
+                })
+            end
+        end
+    end
+
+    -- Highest Luck (Rung) first -> already-locked first (avoid pointless same-rung swaps) -> higher EarnRate -> lower index
+    table.sort(eligible, function(a, b)
+        if a.luck ~= b.luck then return a.luck > b.luck end
+        if a.locked ~= b.locked then return a.locked end
+        if a.earnScore ~= b.earnScore then return a.earnScore > b.earnScore end
+        return a.index < b.index
+    end)
+
+    local sumLuck = 0
+    for _, item in ipairs(eligible) do
+        if #keepList >= maxKeepSlots or sumLuck >= luckCap then break end
+        keepSet[item.index] = item
+        table.insert(keepList, item)
+        sumLuck = sumLuck + item.luck
+    end
+    return keepSet, keepList, sumLuck, luckCap
+end
+
+local function IsProtectedForLockQueue(pedInfo, maxKeepSlots, pedIdx, rung, cachedLockMin, smartLuckMode)
     local lockMin = cachedLockMin
     if lockMin == nil then
-        _, lockMin = GetKeepLockSettings(nil, pedInfo and pedInfo.unlockedCount)
+        _, lockMin, _, _, smartLuckMode = GetKeepLockSettings(nil, pedInfo and pedInfo.unlockedCount)
     end
-    if lockMin < 2 or maxKeepSlots <= 0 then
-        return false
+    if lockMin < 2 or maxKeepSlots <= 0 then return false end
+    if smartLuckMode then
+        local keepSet = Runtime.Helpers.ComputeSmartLuckKeepSet(pedInfo, lockMin, maxKeepSlots)
+        return keepSet[pedIdx] ~= nil
     end
     local minScore = Runtime.Helpers.GetRungBaseCps(lockMin)
     local occ = pedInfo and pedInfo.byIndex and pedInfo.byIndex[pedIdx]
     local candScore = (occ and occ.earnScore) or Runtime.Helpers.ComputePedestalEarnScore({ R = rung })
-    if candScore + 1e-9 < minScore then
-        return false
-    end
+    if candScore + 1e-9 < minScore then return false end
     -- Skip temporarily only if Loop A can lock it outright or swap out a lower-earning locked pedestal
-    if #pedInfo.lockedList < maxKeepSlots then
-        return true
-    end
-    if Config.AutoLockUpgradeSwap and #pedInfo.lockedList > 0 and candScore > (pedInfo.lockedList[1].earnScore + 1e-6) then
-        return true
-    end
+    if #pedInfo.lockedList < maxKeepSlots then return true end
+    if Config.AutoLockUpgradeSwap and #pedInfo.lockedList > 0 and candScore > (pedInfo.lockedList[1].earnScore + 1e-6) then return true end
     return false
 end
 
 local function StepKeepLockAndStock(plot, buttons, tycoonComplete)
-    if not plot or not Modules.MerchantTypes then
-        return
-    end
+    if not plot or not Modules.MerchantTypes then return end
     local now = os.clock()
-    if now - (Runtime.Cache.LastKeepLockStepAt or 0) < 0.5 then
-        return
-    end
+    if now - (Runtime.Cache.LastKeepLockStepAt or 0) < 0.5 then return end
     Runtime.Cache.LastKeepLockStepAt = now
 
     local pedInfo = AnalyzePedestals(plot)
@@ -3330,75 +3248,109 @@ local function StepKeepLockAndStock(plot, buttons, tycoonComplete)
     end
 
     local maxAllowed = GetServerMaxBelow()
-    local keepDesired, lockMin, maxKeepSlots, part2AutoKeep = GetKeepLockSettings(maxAllowed, pedInfo.unlockedCount, plot, buttons)
+    local keepDesired, lockMin, maxKeepSlots, part2AutoKeep, smartLuckMode =
+        GetKeepLockSettings(maxAllowed, pedInfo.unlockedCount, plot, buttons, tycoonComplete)
     local minFarm = ComputeMinFarmPedestals(pedInfo.unlockedCount, part2AutoKeep)
     local lockedList = table.clone(pedInfo.lockedList)
+    local displayMaxKeep = maxKeepSlots
+    local smartSumLuck, smartLuckCap = 0, 100
 
-    -- 1. Enforce maxKeepSlots invariant (unlocks all pedestals when KeepRung=0 in Part 1, or trims excess locked slots)
-    while #lockedList > maxKeepSlots do
-        local weakest = table.remove(lockedList, 1)
-        pcall(plot.Invoke, plot, NET.SetLock, weakest.index, false)
-        Runtime.Helpers.InvalidatePlotSave(plot, VAR.Pedestals)
-        task.wait(0.04)
-    end
+    if smartLuckMode then
+        -- Post-complete Smart Luck Cap: lock minimal highest-Rung set for full +100% PumpkinLuck, then unlock redundant slots
+        local keepSet, keepList, sumLuck, luckCap = Runtime.Helpers.ComputeSmartLuckKeepSet(pedInfo, lockMin, maxKeepSlots)
+        smartSumLuck, smartLuckCap = sumLuck, luckCap
+        displayMaxKeep = math.max(#keepList, (sumLuck < luckCap) and maxKeepSlots or #keepList)
 
-    -- 2. Lock highest-earning pedestals (EarnRate = Cps[Rung] * VariantMult) and swap weaker ones upward
-    if lockMin >= 2 and maxKeepSlots > 0 then
-        local minScore = Runtime.Helpers.GetRungBaseCps(lockMin)
-        local candidates = {}
-        for _, occ in ipairs(pedInfo.occupied) do
-            if not occ.locked and (occ.earnScore or 0) + 1e-9 >= minScore then
-                table.insert(candidates, occ)
-            end
-        end
-        table.sort(candidates, function(a, b)
-            if a.earnScore ~= b.earnScore then
-                return a.earnScore > b.earnScore
-            end
-            return a.rung > b.rung
-        end)
-
-        for _, cand in ipairs(candidates) do
-            if #lockedList < maxKeepSlots then
-                local ok, res = pcall(plot.Invoke, plot, NET.SetLock, cand.index, true)
+        -- Step A: Lock newly desired higher-Rung pedestals FIRST so IslandLuck never dips during swaps
+        for _, item in ipairs(keepList) do
+            if not item.locked then
+                local ok, res = pcall(plot.Invoke, plot, NET.SetLock, item.index, true)
                 if ok and res ~= false then
                     Runtime.Helpers.InvalidatePlotSave(plot, VAR.Pedestals)
-                    table.insert(lockedList, { index = cand.index, rung = cand.rung, earnScore = cand.earnScore, locked = true })
-                    table.sort(lockedList, function(a, b)
-                        if a.earnScore ~= b.earnScore then
-                            return a.earnScore < b.earnScore
-                        end
-                        return a.rung < b.rung
-                    end)
-                    Log("INFO", "Locked Pedestal #%d (R%d, earn=%.2fx) [%d/%d]", cand.index, cand.rung, cand.earnScore, #lockedList, maxKeepSlots)
+                    item.locked = true
+                    table.insert(lockedList, { index = item.index, rung = item.rung, earnScore = item.earnScore, locked = true })
+                    Log("INFO", "Locked Pedestal #%d (R%d, +%d%% Luck) [SmartLuck %d/%d%%]",
+                        item.index, item.rung, item.luck, math.min(sumLuck, luckCap), luckCap)
                 end
                 task.wait(0.04)
-            elseif Config.AutoLockUpgradeSwap and #lockedList > 0 and cand.earnScore > (lockedList[1].earnScore + 1e-6) then
-                local weakest = table.remove(lockedList, 1)
-                local uOk = pcall(plot.Invoke, plot, NET.SetLock, weakest.index, false)
+            end
+        end
+
+        -- Step B: Unlock any locked pedestal no longer needed for the +100% PumpkinLuck cap
+        for i = #lockedList, 1, -1 do
+            local entry = lockedList[i]
+            if not keepSet[entry.index] then
+                local uOk = pcall(plot.Invoke, plot, NET.SetLock, entry.index, false)
                 if uOk then
                     Runtime.Helpers.InvalidatePlotSave(plot, VAR.Pedestals)
-                    task.wait(0.04)
-                    local lOk, lRes = pcall(plot.Invoke, plot, NET.SetLock, cand.index, true)
-                    if lOk and lRes ~= false then
+                    table.remove(lockedList, i)
+                    Log("INFO", "Unlocked redundant Pedestal #%d (R%d) for Token farming [SmartLuck %d/%d%%, kept %d]",
+                        entry.index, entry.rung or 0, math.min(sumLuck, luckCap), luckCap, #lockedList)
+                end
+                task.wait(0.04)
+            end
+        end
+    else
+        -- 1. Enforce maxKeepSlots invariant (unlocks all pedestals when KeepRung=0 in Part 1, or trims excess locked slots)
+        while #lockedList > maxKeepSlots do
+            local weakest = table.remove(lockedList, 1)
+            pcall(plot.Invoke, plot, NET.SetLock, weakest.index, false)
+            Runtime.Helpers.InvalidatePlotSave(plot, VAR.Pedestals)
+            task.wait(0.04)
+        end
+
+        -- 2. Lock highest-earning pedestals (EarnRate = Cps[Rung] * VariantMult) and swap weaker ones upward
+        if lockMin >= 2 and maxKeepSlots > 0 then
+            local minScore = Runtime.Helpers.GetRungBaseCps(lockMin)
+            local candidates = {}
+            for _, occ in ipairs(pedInfo.occupied) do
+                if not occ.locked and (occ.earnScore or 0) + 1e-9 >= minScore then
+                    table.insert(candidates, occ)
+                end
+            end
+            table.sort(candidates, function(a, b)
+                if a.earnScore ~= b.earnScore then return a.earnScore > b.earnScore end
+                return a.rung > b.rung
+            end)
+
+            for _, cand in ipairs(candidates) do
+                if #lockedList < maxKeepSlots then
+                    local ok, res = pcall(plot.Invoke, plot, NET.SetLock, cand.index, true)
+                    if ok and res ~= false then
                         Runtime.Helpers.InvalidatePlotSave(plot, VAR.Pedestals)
                         table.insert(lockedList, { index = cand.index, rung = cand.rung, earnScore = cand.earnScore, locked = true })
                         table.sort(lockedList, function(a, b)
-                            if a.earnScore ~= b.earnScore then
-                                return a.earnScore < b.earnScore
-                            end
+                            if a.earnScore ~= b.earnScore then return a.earnScore < b.earnScore end
                             return a.rung < b.rung
                         end)
-                        Log("INFO", "Swapped Pedestal #%d (%.2fx) -> #%d (R%d, earn=%.2fx)", weakest.index, weakest.earnScore or 0, cand.index, cand.rung, cand.earnScore)
+                        Log("INFO", "Locked Pedestal #%d (R%d, earn=%.2fx) [%d/%d]", cand.index, cand.rung, cand.earnScore, #lockedList, maxKeepSlots)
                     end
+                    task.wait(0.04)
+                elseif Config.AutoLockUpgradeSwap and #lockedList > 0 and cand.earnScore > (lockedList[1].earnScore + 1e-6) then
+                    local weakest = table.remove(lockedList, 1)
+                    local uOk = pcall(plot.Invoke, plot, NET.SetLock, weakest.index, false)
+                    if uOk then
+                        Runtime.Helpers.InvalidatePlotSave(plot, VAR.Pedestals)
+                        task.wait(0.04)
+                        local lOk, lRes = pcall(plot.Invoke, plot, NET.SetLock, cand.index, true)
+                        if lOk and lRes ~= false then
+                            Runtime.Helpers.InvalidatePlotSave(plot, VAR.Pedestals)
+                            table.insert(lockedList, { index = cand.index, rung = cand.rung, earnScore = cand.earnScore, locked = true })
+                            table.sort(lockedList, function(a, b)
+                                if a.earnScore ~= b.earnScore then return a.earnScore < b.earnScore end
+                                return a.rung < b.rung
+                            end)
+                            Log("INFO", "Swapped Pedestal #%d (%.2fx) -> #%d (R%d, earn=%.2fx)", weakest.index, weakest.earnScore or 0, cand.index, cand.rung, cand.earnScore)
+                        end
+                    end
+                    task.wait(0.04)
                 end
-                task.wait(0.04)
             end
         end
     end
 
     Runtime.Stats.LockedPedestals = #lockedList
-    Runtime.Stats.MaxKeepSlots = maxKeepSlots
+    Runtime.Stats.MaxKeepSlots = displayMaxKeep
 
     -- 3. AutoPlace Stock setting + proactive allocation onto empty pedestals (highest band first)
     local merchantOwned = Modules.PumpkinButtonsUtil and Modules.PumpkinButtonsUtil.Owned(buttons, Modules.MerchantTypes.BUTTON)
@@ -3437,11 +3389,20 @@ local function StepKeepLockAndStock(plot, buttons, tycoonComplete)
         end
     end
 
-    -- 4. Adaptive Keep Rule (QW_Policy): protect target KeepRung until Keep slots saturate, then Secret-guard
+    -- 4. Adaptive Keep Rule (QW_Policy): protect target KeepRung until Keep slots saturate, then guard only compression tiers
     if os.clock() - (Runtime.Cache.LastPolicyInvokeAt or 0) >= 0.6 then
         local targetPolicy = keepDesired
         if keepDesired <= 0 or pedInfo.unlockedCount <= minFarm then
             targetPolicy = 0
+        elseif smartLuckMode and smartSumLuck >= smartLuckCap then
+            -- Full +100% Luck reached: only guard tiers that can reduce locked slot count (1=Secret done -> 0; 2 locks -> guard R8; 3+ -> guard R7-R8)
+            if #lockedList <= 1 then
+                targetPolicy = 0
+            elseif #lockedList == 2 then
+                targetPolicy = (maxAllowed >= 8) and 8 or 0
+            else
+                targetPolicy = (maxAllowed >= 7) and 7 or 0
+            end
         elseif #lockedList >= maxKeepSlots then
             -- Lock slots full; only pause Secret spawns briefly until Lock loop swaps them in
             targetPolicy = (maxAllowed >= 8) and 8 or 0
@@ -3456,15 +3417,13 @@ local function StepKeepLockAndStock(plot, buttons, tycoonComplete)
             local ok, res = pcall(plot.Invoke, plot, NET.SetAutoBreak, targetPolicy)
             if ok and res ~= false then
                 Runtime.Helpers.InvalidatePlotSave(plot, VAR.AutoBreak)
-                Log("DEBUG", "Updated Keep policy (QW_Policy): %d -> %d (locked %d/%d)", currentPolicy, targetPolicy, #lockedList, maxKeepSlots)
+                Log("DEBUG", "Updated Keep policy (QW_Policy): %d -> %d (locked %d/%d)", currentPolicy, targetPolicy, #lockedList, displayMaxKeep)
             end
         end
     end
 
     -- 5. Merchant Buying & Server AutoMerchant control
-    if not merchantOwned then
-        return
-    end
+    if not merchantOwned then return end
 
     -- Keep server HM_Sustain OFF if configured so it doesn't fill stock slots with low tiers
     local autoVar = Modules.MerchantTypes.AUTO_VAR
@@ -3474,15 +3433,11 @@ local function StepKeepLockAndStock(plot, buttons, tycoonComplete)
         Runtime.Helpers.InvalidatePlotSave(plot, autoVar)
     end
 
-    if not Config.AutoBuyMerchant or (Config.MerchantRequireButtonsComplete and not tycoonComplete) or Runtime.Stats.FightingTurkeyBoss then
-        return
-    end
+    if not Config.AutoBuyMerchant or (Config.MerchantRequireButtonsComplete and not tycoonComplete) or Runtime.Stats.FightingTurkeyBoss then return end
 
     local rushMode = (Config.RushButtonsFirst == true and not tycoonComplete)
     if rushMode and Config.MerchantRushRequireZone6 ~= false then
-        if not (Modules.PumpkinButtonsUtil and Modules.PumpkinButtonsUtil.Owned(buttons, "Zone6_Zone")) then
-            return
-        end
+        if not (Modules.PumpkinButtonsUtil and Modules.PumpkinButtonsUtil.Owned(buttons, "Zone6_Zone")) then return end
     end
 
     local coins = GetCurrency((PT and PT.COIN) or "PumpkinTycoonCoins")
@@ -3490,30 +3445,20 @@ local function StepKeepLockAndStock(plot, buttons, tycoonComplete)
     local activateCoins = tonumber(Config.MerchantActivateCoins) or 0
     local spareCoins = tonumber(Config.MerchantMinSpareCoins) or 0
     local rushShare = math.clamp(tonumber(Config.MerchantRushMaxCoinShare) or 0.05, 0, 1)
-    if not rushMode and coins < activateCoins then
-        return
-    end
-    if rushMode and rushShare <= 0 then
-        return
-    end
+    if not rushMode and coins < activateCoins then return end
+    if rushMode and rushShare <= 0 then return end
 
     local merchantClean = Modules.MerchantTypes.Clean(Runtime.Helpers.GetPlotSave(plot, VAR.Merchant))
-    if not merchantClean or type(merchantClean.Items) ~= "table" then
-        return
-    end
+    if not merchantClean or type(merchantClean.Items) ~= "table" then return end
 
-    if os.clock() - (Runtime.Cache.LastMerchantFailAt or 0) < 15 then
-        return
-    end
+    if os.clock() - (Runtime.Cache.LastMerchantFailAt or 0) < 15 then return end
 
     local stockCount = #Modules.MerchantTypes.CleanStock(Runtime.Helpers.GetPlotSave(plot, VAR.Stock))
     local maxSlots = LocalPlayer:GetAttribute(Modules.MerchantTypes.ATTR_SLOTS) or Modules.MerchantTypes.BaseSlots()
     local bandConfigs = Modules.MerchantTypes.Config()
 
     local function CanBuyBand(price, curCoins)
-        if type(price) ~= "number" or price <= 0 then
-            return false
-        end
+        if type(price) ~= "number" or price <= 0 then return false end
         if rushMode then
             local spendable = math.max(0, curCoins - (Runtime.Cache.ReserveEarlyEggCost or 0))
             return spendable >= price and price <= (curCoins * rushShare)
@@ -3533,9 +3478,7 @@ local function StepKeepLockAndStock(plot, buttons, tycoonComplete)
             end
         end
     end
-    if not hasCandidate then
-        return
-    end
+    if not hasCandidate then return end
 
     WithMachinePad(plot, Modules.MerchantTypes.MACHINE, Modules.MerchantTypes.Range, function()
         for _, bandKey in ipairs(Config.MerchantBandOrder or {}) do
@@ -3572,21 +3515,13 @@ end
 local activeFarmTarget = nil -- { uid = string, model = Model, pos = Vector3, isBonus = bool, rung = number }
 
 local function BelongsToPlot(model, attrs, islandBox, plotId, plotSuffix)
-    if type(attrs) == "table" and attrs.Plot ~= nil then
-        return attrs.Plot == plotId
-    end
+    if type(attrs) == "table" and attrs.Plot ~= nil then return attrs.Plot == plotId end
     local owner = model:GetAttribute("OwnerUsername")
-    if owner ~= nil then
-        return owner == LocalPlayer.Name
-    end
+    if owner ~= nil then return owner == LocalPlayer.Name end
     local areaId = model:GetAttribute("AreaID")
     if type(areaId) == "string" and plotSuffix then
-        if string.sub(areaId, -#plotSuffix) == plotSuffix then
-            return true
-        end
-        if string.find(areaId, "_Zone_", 1, true) then
-            return false
-        end
+        if string.sub(areaId, -#plotSuffix) == plotSuffix then return true end
+        if string.find(areaId, "_Zone_", 1, true) then return false end
     end
     return IsOnMyIsland(model, islandBox)
 end
@@ -3596,15 +3531,11 @@ local function ResolveBreakableZoneIndex(data, model, attrs)
     if not zn and model then
         zn = tonumber(model:GetAttribute("ZoneNumber"))
     end
-    if zn and zn >= 1 then
-        return zn
-    end
+    if zn and zn >= 1 then return zn end
     local areaId = (data and data.areaID) or (attrs and attrs.AreaID) or (model and model:GetAttribute("AreaID"))
     if type(areaId) == "string" and PT and type(PT.ZONES) == "table" then
         for i, z in ipairs(PT.ZONES) do
-            if z and z.Section and string.find(areaId, z.Section, 1, true) then
-                return i
-            end
+            if z and z.Section and string.find(areaId, z.Section, 1, true) then return i end
         end
     end
     return 1
@@ -3616,9 +3547,7 @@ local function CollectMyBreakables(plot, pedInfo)
     local entryPool = Runtime.Cache.TargetsUseB and Runtime.Cache.EntryPoolB or Runtime.Cache.EntryPoolA
     table.clear(targets)
 
-    if not plot or not Modules.BreakableFrontend or not Modules.BreakableFrontend.AllByInstanceAndClass then
-        return targets
-    end
+    if not plot or not Modules.BreakableFrontend or not Modules.BreakableFrontend.AllByInstanceAndClass then return targets end
 
     local allByClass = Runtime.Cache.AllByClassScratch
     table.clear(allByClass)
@@ -3635,7 +3564,8 @@ local function CollectMyBreakables(plot, pedInfo)
     local plotId = plot:GetId()
     local plotSuffix = plotId and ("_" .. tostring(plotId)) or nil
     local buttons = Runtime.Cache.Buttons
-    local _, cachedLockMin, maxKeepSlots = GetKeepLockSettings(nil, pedInfo.unlockedCount, plot, buttons)
+    local _, cachedLockMin, maxKeepSlots, _, smartLuckMode =
+        GetKeepLockSettings(nil, pedInfo.unlockedCount, plot, buttons, Runtime.Stats.TycoonComplete)
     local z6Owned = Modules.PumpkinButtonsUtil and buttons and Modules.PumpkinButtonsUtil.Owned(buttons, "Zone6_Zone")
     local lowPedSweepInterval = math.max(0, tonumber(Config.PedestalLowRungSweepIntervalSec) or 20)
     local nowClock = os.clock()
@@ -3669,7 +3599,7 @@ local function CollectMyBreakables(plot, pedInfo)
             elseif type(pedIdx) == "number" then
                 if not lockedPedestals[pedIdx] then
                     eligibleFallback = true
-                    if not IsProtectedForLockQueue(pedInfo, maxKeepSlots, pedIdx, rung, cachedLockMin) then
+                    if not IsProtectedForLockQueue(pedInfo, maxKeepSlots, pedIdx, rung, cachedLockMin, smartLuckMode) then
                         valid = true
                     end
                 end
@@ -3727,9 +3657,7 @@ local function CollectMyBreakables(plot, pedInfo)
     if #targets == 0 and #emergencyFallback > 0 then
         -- Deadlock safety: break lowest-rung unlocked pedestal if every unlocked slot paused simultaneously
         table.sort(emergencyFallback, function(a, b)
-            if a.rung ~= b.rung then
-                return a.rung < b.rung
-            end
+            if a.rung ~= b.rung then return a.rung < b.rung end
             return a.dist < b.dist
         end)
         targets[1] = emergencyFallback[1]
@@ -3744,9 +3672,7 @@ local function CollectMyBreakables(plot, pedInfo)
 end
 
 local function HoldPetOnModel(pet, targetModel)
-    if not pet or not targetModel or not targetModel.Parent then
-        return
-    end
+    if not pet or not targetModel or not targetModel.Parent then return end
     local okT, tgtType = pcall(pet.GetTargetType, pet)
     local okG, curTgt = pcall(pet.GetTarget, pet)
     if not okT or not okG or tgtType ~= "Breakable" or curTgt ~= targetModel then
@@ -3757,13 +3683,9 @@ local function HoldPetOnModel(pet, targetModel)
 end
 
 local function GetControllablePets()
-    if not Config.AutoPetFocus or not Modules.PlayerPet or not Modules.PlayerPet.GetByPlayer then
-        return nil
-    end
+    if not Config.AutoPetFocus or not Modules.PlayerPet or not Modules.PlayerPet.GetByPlayer then return nil end
     local ok, pets = pcall(Modules.PlayerPet.GetByPlayer, LocalPlayer)
-    if not ok or type(pets) ~= "table" then
-        return nil
-    end
+    if not ok or type(pets) ~= "table" then return nil end
     local list = Runtime.Cache.ControllablePetsScratch
     if not list then
         list = {}
@@ -3780,26 +3702,18 @@ local function GetControllablePets()
 end
 
 local function AssignPetsToModel(targetModel)
-    if not targetModel or not targetModel.Parent then
-        return
-    end
+    if not targetModel or not targetModel.Parent then return end
     local pets = GetControllablePets()
-    if not pets then
-        return
-    end
+    if not pets then return end
     for _, pet in ipairs(pets) do
         HoldPetOnModel(pet, targetModel)
     end
 end
 
 local function AssignPetsSpread(zonePool)
-    if type(zonePool) ~= "table" or #zonePool == 0 then
-        return
-    end
+    if type(zonePool) ~= "table" or #zonePool == 0 then return end
     local pets = GetControllablePets()
-    if not pets or #pets == 0 then
-        return
-    end
+    if not pets or #pets == 0 then return end
 
     local poolByModel = Runtime.Cache.PoolByModelScratch
     local claimedCount = Runtime.Cache.ClaimedCountScratch
@@ -3834,9 +3748,7 @@ local function AssignPetsSpread(zonePool)
                 if c < bestCount then
                     bestCount = c
                     bestEntry = entry
-                    if c == 0 then
-                        break
-                    end
+                    if c == 0 then break end
                 end
             end
         end
@@ -3849,9 +3761,7 @@ end
 
 local function GetTapReach()
     local now = os.clock()
-    if Runtime.Cache.TapReachVal and (now - (Runtime.Cache.TapReachAt or 0)) < 3.0 then
-        return Runtime.Cache.TapReachVal
-    end
+    if Runtime.Cache.TapReachVal and (now - (Runtime.Cache.TapReachAt or 0)) < 3.0 then return Runtime.Cache.TapReachVal end
     local val = 18
     if PT_AutoBreak and PT_AutoBreak.TapReach then
         local ok, r = pcall(PT_AutoBreak.TapReach)
@@ -3865,9 +3775,7 @@ local function GetTapReach()
 end
 
 local function StepFarmTargeter(plot)
-    if plot and Runtime.Helpers.StepTurkeyBossTarget and Runtime.Helpers.StepTurkeyBossTarget(plot) then
-        return
-    end
+    if plot and Runtime.Helpers.StepTurkeyBossTarget and Runtime.Helpers.StepTurkeyBossTarget(plot) then return end
     if not Config.AutoFarm or not plot then
         activeFarmTarget = nil
         Runtime.Stats.ActiveTargetUid = nil
@@ -3929,11 +3837,21 @@ local function StepFarmTargeter(plot)
         or (chosen.isPedestal and ("Ped-Rung-" .. tostring(chosen.rung)) or ("Zone-" .. tostring(chosen.zone or 1)))
 
     -- Keep character inside both TapReach and Egg range when Hatching overlaps with breakables
-    if Config.AutoTeleportToTarget and not IsMoveLocked() then
+    if Config.AutoTeleportToTarget and not IsMoveLocked() and not Runtime.Cache.WildRerollActive then
         local reach = GetTapReach()
         local moveRange = math.max(10, reach - 5)
+        local hatchStandPos = Runtime.Stats.IsHatching and Runtime.Cache.ActiveHatchStandPos or nil
         local hatchEggPos = Runtime.Stats.IsHatching and Runtime.Cache.ActiveHatchEggPos or nil
-        if hatchEggPos then
+        if hatchStandPos then
+            local _, curHrp = GetCharacter()
+            if curHrp and (HorizontalDist(curHrp.Position, hatchStandPos) > 5 or math.abs(curHrp.Position.Y - hatchStandPos.Y) > 8) then
+                pcall(function()
+                    curHrp.AssemblyLinearVelocity = Vector3.zero
+                end)
+                curHrp.CFrame = CFrame.new(hatchStandPos)
+                Runtime.Cache.LastTeleportAt = os.clock()
+            end
+        elseif hatchEggPos then
             local safeEggRadius = math.clamp((tonumber(Config.HatchMoveMaxDist) or 30) - 8, 10, 22)
             local _, curHrp = GetCharacter()
             local dest = chosen.pos
@@ -3981,9 +3899,7 @@ local function PickInRangeTapTargetUid(hrpPos, baseReach)
         if activeFarmTarget.isTurkeyBoss and Runtime.Helpers.GetTurkeyReach then
             r = math.max(r, Runtime.Helpers.GetTurkeyReach())
         end
-        if HorizontalDist(hrpPos, m:GetPivot().Position) <= r then
-            return activeFarmTarget.uid
-        end
+        if HorizontalDist(hrpPos, m:GetPivot().Position) <= r then return activeFarmTarget.uid end
     end
     local pool = Runtime.Cache.TapTargets
     if type(pool) == "table" then
@@ -3992,9 +3908,7 @@ local function PickInRangeTapTargetUid(hrpPos, baseReach)
             if m and m.Parent then
                 local attrReach = tonumber(m:GetAttribute("AutoTapRadius"))
                 local r = attrReach and math.max(baseReach, attrReach) or baseReach
-                if HorizontalDist(hrpPos, m:GetPivot().Position) <= r then
-                    return entry.uid
-                end
+                if HorizontalDist(hrpPos, m:GetPivot().Position) <= r then return entry.uid end
             end
         end
     end
@@ -4002,18 +3916,12 @@ local function PickInRangeTapTargetUid(hrpPos, baseReach)
 end
 
 local function StepRapidTap()
-    if not Config.AutoTap or (not activeFarmTarget and type(Runtime.Cache.TapTargets) ~= "table") then
-        return
-    end
+    if not Config.AutoTap or (not activeFarmTarget and type(Runtime.Cache.TapTargets) ~= "table") then return end
     local _, hrp = GetCharacter()
-    if not hrp then
-        return
-    end
+    if not hrp then return end
 
     local targetUid = PickInRangeTapTargetUid(hrp.Position, GetTapReach())
-    if not targetUid then
-        return
-    end
+    if not targetUid then return end
 
     if Config.TapSendAutoClickerSignal and Modules.Signal and Modules.Signal.Fire then
         pcall(Modules.Signal.Fire, "AutoClicker_Nearby", targetUid)
@@ -4038,20 +3946,14 @@ local function FireOrbsCollect(batch)
 end
 
 function Runtime.Helpers.EnsureOrbsCreateHook()
-    if Runtime.Cache.OrbsCreateConnBound then
-        return
-    end
+    if Runtime.Cache.OrbsCreateConnBound then return end
     local net = Modules.Network
-    if not net or type(net.Fired) ~= "function" then
-        return
-    end
+    if not net or type(net.Fired) ~= "function" then return end
     local okSig, sig = pcall(net.Fired, "Orbs: Create")
     if okSig and sig and type(sig.Connect) == "function" then
         Runtime.Cache.OrbsCreateConnBound = true
         BindConn(sig, function(data)
-            if not IsRunning() or not Config.AutoCollectOrbs or type(data) ~= "table" then
-                return
-            end
+            if not IsRunning() or not Config.AutoCollectOrbs or type(data) ~= "table" then return end
             local batch = nil
             for _, orb in ipairs(data) do
                 local numId = type(orb) == "table" and tonumber(orb.id) or nil
@@ -4074,19 +3976,13 @@ function Runtime.Helpers.EnsureOrbsCreateHook()
 end
 
 local function SweepDrops()
-    if not Config.AutoCollectOrbs then
-        return
-    end
+    if not Config.AutoCollectOrbs then return end
     local things = Workspace:FindFirstChild("__THINGS")
     local orbsFolder = things and things:FindFirstChild("Orbs")
-    if not orbsFolder then
-        return
-    end
+    if not orbsFolder then return end
 
     local children = orbsFolder:GetChildren()
-    if #children == 0 then
-        return
-    end
+    if #children == 0 then return end
 
     local orbIds = Runtime.Cache.OrbSweepIds
     local seen = Runtime.Cache.OrbSweepSeen
@@ -4118,28 +4014,20 @@ end
 -- 8. TYCOON BUTTONS RUSH & COMPLETION CLAIM
 -- ============================================================================
 local function IsCriticalRootButton(btn)
-    if btn.Optional == true then
-        return false
-    end
-    if btn.Opens or btn.PathIndex or btn.Egg or btn.Pedestal then
-        return true
-    end
+    if btn.Optional == true then return false end
+    if btn.Opens or btn.PathIndex or btn.Egg or btn.Pedestal then return true end
     if btn.Id == "UpgradeMachine" or btn.Id == "CocoaStand" or btn.Id == "GoldMachine" or btn.Id == "RainbowMachine"
         or btn.Id == "PetNetStore"
         or btn.Subclass == "IslandLuck" or btn.Subclass == "CoinsBoost" or btn.Subclass == "DamageBoost" then
         return true
     end
-    if string.sub(btn.Id, 1, 12) == "OrchardChest" or string.sub(btn.Id, -5) == "_Luck" or string.find(btn.Id, "Pedestal", 1, true) then
-        return true
-    end
+    if string.sub(btn.Id, 1, 12) == "OrchardChest" or string.sub(btn.Id, -5) == "_Luck" or string.find(btn.Id, "Pedestal", 1, true) then return true end
     return false
 end
 
 local function GetCriticalButtonSet(part2)
     local isP2 = part2 == true
-    if Runtime.Cache.CriticalButtons ~= nil and Runtime.Cache.CriticalButtonsPart2 == isP2 then
-        return Runtime.Cache.CriticalButtons
-    end
+    if Runtime.Cache.CriticalButtons ~= nil and Runtime.Cache.CriticalButtonsPart2 == isP2 then return Runtime.Cache.CriticalButtons end
     local set = {}
     local byId = Modules.ButtonsTypes and Modules.ButtonsTypes.BY_ID
     local list = Modules.ButtonsTypes and Modules.ButtonsTypes.BUTTONS
@@ -4178,40 +4066,28 @@ local function GetCriticalButtonSet(part2)
 end
 
 local function GetButtonPriorityRank(btn, part2)
-    if btn.Optional == true then
-        return 4
-    end
-    if IsCriticalRootButton(btn) or GetCriticalButtonSet(part2)[btn.Id] then
-        return 1
-    end
-    if btn.Id == "Merchant" then
-        return 2
-    end
+    if btn.Optional == true then return 4 end
+    if IsCriticalRootButton(btn) or GetCriticalButtonSet(part2)[btn.Id] then return 1 end
+    if btn.Id == "Merchant" then return 2 end
     return 3
 end
 
 local function GetButtonPriceMult()
     if PT_Buttons and PT_Buttons.PriceMult then
         local ok, mult = pcall(PT_Buttons.PriceMult)
-        if ok and type(mult) == "number" then
-            return mult
-        end
+        if ok and type(mult) == "number" then return mult end
     end
     return tonumber(GetFlag("PumpkinTycoon_ButtonPriceMult", 1)) or 1
 end
 
 local function GetMinCriticalButtonPrice(buttons, plot)
-    if not Modules.PumpkinButtonsUtil or not Modules.PumpkinButtonsUtil.Available then
-        return nil
-    end
+    if not Modules.PumpkinButtonsUtil or not Modules.PumpkinButtonsUtil.Available then return nil end
     local targetPlot = plot or GetMyPlot()
     local part2 = Runtime.Helpers.IsPlotPart2Active(targetPlot)
     local zones = GetZoneCount(targetPlot)
     local priceMult = GetButtonPriceMult()
     local okAvail, avail = pcall(Modules.PumpkinButtonsUtil.Available, buttons, zones, part2, priceMult)
-    if not okAvail or type(avail) ~= "table" then
-        return nil
-    end
+    if not okAvail or type(avail) ~= "table" then return nil end
     local minPrice = nil
     for _, btn in ipairs(avail) do
         if GetButtonPriorityRank(btn, part2) == 1 then
@@ -4238,7 +4114,8 @@ function Runtime.Helpers.TryClaimCompletionsAndRebirth(plot, buttons, tycoonComp
         end
     end
 
-    if Config.AutoCompletePart2 ~= false and isPart2 and tycoonComplete and not claimedComplete2 and NET.Complete2 then
+    if Config.AutoCompletePart2 ~= false and isPart2 and tycoonComplete and not claimedComplete2 and NET.Complete2
+        and not Runtime.Cache.Complete2Unsupported then
         if (now - (Runtime.Cache.LastComplete2FailAt or 0)) >= 15 then
             local ok2, res2, reason2 = pcall(plot.Invoke, plot, NET.Complete2)
             if ok2 and res2 ~= false then
@@ -4247,8 +4124,14 @@ function Runtime.Helpers.TryClaimCompletionsAndRebirth(plot, buttons, tycoonComp
                 Log("INFO", "Claimed Tycoon Part 2 completion reward (MH_Conclude)!")
                 buttons, tycoonComplete, claimedComplete, claimedComplete2, isPart2, rebirths = GetProgressState(plot, true)
             else
+                local errStr = tostring(reason2 or res2)
                 Runtime.Cache.LastComplete2FailAt = now
-                Log("DEBUG", "Part 2 completion claim skipped/failed: %s", tostring(reason2 or res2))
+                if string.find(errStr, "UnhandledOwnerInvoke", 1, true) then
+                    Runtime.Cache.Complete2Unsupported = true
+                    Log("DEBUG", "Part 2 completion remote (%s) is unhandled on server; disabling retries.", tostring(NET.Complete2))
+                else
+                    Log("DEBUG", "Part 2 completion claim skipped/failed: %s", errStr)
+                end
             end
         end
     end
@@ -4258,6 +4141,7 @@ function Runtime.Helpers.TryClaimCompletionsAndRebirth(plot, buttons, tycoonComp
     if wantRebirth and isPart2 and tycoonComplete and NET.Rebirth
         and GetFlag("PumpkinTycoon_Rebirth", false) == true
         and (not Config.AutoCompleteTycoon or claimedComplete)
+        and (Config.AutoCompletePart2 == false or claimedComplete2 or Runtime.Cache.Complete2Unsupported == true)
         and (now - (Runtime.Cache.LastRebirthFailAt or 0)) >= 10 then
         local okR, resR, reasonR, giftsR, newRebR = pcall(plot.Invoke, plot, NET.Rebirth)
         if okR and resR == true then
@@ -4285,9 +4169,7 @@ function Runtime.Helpers.TryClaimCompletionsAndRebirth(plot, buttons, tycoonComp
 end
 
 local function StepButtonsAndComplete(plot)
-    if not plot or not Modules.PumpkinButtonsUtil then
-        return nil, false, false, false, false, 0
-    end
+    if not plot or not Modules.PumpkinButtonsUtil then return nil, false, false, false, false, 0 end
 
     local now = os.clock()
     if Runtime.Cache.Buttons ~= nil and (now - (Runtime.Cache.LastButtonsStepAt or 0)) < 0.5 then
@@ -4301,9 +4183,7 @@ local function StepButtonsAndComplete(plot)
     buttons, tycoonComplete, claimedComplete, claimedComplete2, isPart2, rebirths =
         Runtime.Helpers.TryClaimCompletionsAndRebirth(plot, buttons, tycoonComplete, claimedComplete, claimedComplete2, isPart2, rebirths)
 
-    if not Config.AutoBuyButtons then
-        return buttons, tycoonComplete, claimedComplete, claimedComplete2, isPart2, rebirths
-    end
+    if not Config.AutoBuyButtons then return buttons, tycoonComplete, claimedComplete, claimedComplete2, isPart2, rebirths end
 
     local zones = GetZoneCount(plot)
     local priceMult = GetButtonPriceMult()
@@ -4318,16 +4198,16 @@ local function StepButtonsAndComplete(plot)
     -- Burst buy all currently affordable unlocked buttons in progression priority order (Part 1 + Part 2)
     local boughtThisPass = 0
     while IsRunning() and boughtThisPass < 100 do
-        if Config.RushButtonsFirst and not tycoonComplete and Runtime.Stats.IsHatching then
-            break
-        end
+        if Config.RushButtonsFirst and not tycoonComplete and Runtime.Stats.IsHatching then break end
         local spendableCoins = math.max(0, coins - (Runtime.Cache.ReserveEarlyEggCost or 0))
         local avail = Modules.PumpkinButtonsUtil.Available(buttons, zones, isPart2, priceMult)
         local hasRank1 = false
         local minRank1Price = math.huge
         local candidates = {}
         for _, btn in ipairs(avail) do
-            local skipOptional = (btn.Optional == true) and (not Config.BuyOptionalPart2Buttons or not tycoonComplete)
+            local needCannonForBoss = (btn.Id == "Zone8_Cannon") and (Config.AutoTurkeyBoss ~= false)
+            local skipOptional = (btn.Optional == true)
+                and (not tycoonComplete or (not Config.BuyOptionalPart2Buttons and not needCannonForBoss))
             if not skipOptional then
                 local rank = GetButtonPriorityRank(btn, isPart2)
                 local price = Modules.PumpkinButtonsUtil.Price(btn, priceMult)
@@ -4349,25 +4229,17 @@ local function StepButtonsAndComplete(plot)
                 table.insert(affordable, item)
             end
         end
-        if #affordable == 0 then
-            break
-        end
+        if #affordable == 0 then break end
 
         table.sort(affordable, function(a, b)
-            if a.rank ~= b.rank then
-                return a.rank < b.rank
-            end
-            if a.price ~= b.price then
-                return a.price < b.price
-            end
+            if a.rank ~= b.rank then return a.rank < b.rank end
+            if a.price ~= b.price then return a.price < b.price end
             return a.btn.Id < b.btn.Id
         end)
 
         local pick = affordable[1]
         local ok, res = pcall(plot.Invoke, plot, NET.Buy, pick.btn.Id)
-        if not ok or res == false then
-            break
-        end
+        if not ok or res == false then break end
         boughtThisPass = boughtThisPass + 1
         Runtime.Helpers.InvalidatePlotSave(plot, VAR.Buttons)
         table.clear(Runtime.Cache.TargetEggCache)
@@ -4395,18 +4267,14 @@ end
 local function GetUpgradeCostMult()
     if Modules.PumpkinUpgradesUtil and Modules.PumpkinUpgradesUtil.CostMult then
         local ok, mult = pcall(Modules.PumpkinUpgradesUtil.CostMult)
-        if ok and type(mult) == "number" then
-            return mult
-        end
+        if ok and type(mult) == "number" then return mult end
     end
     return 1
 end
 
 local function GetTrackNextInfo(trackKey)
     local row = Modules.UpgradesTypes and Modules.UpgradesTypes.ROWS and Modules.UpgradesTypes.ROWS[trackKey]
-    if not row or not Modules.UpgradesTypes.Id then
-        return nil
-    end
+    if not row or not Modules.UpgradesTypes.Id then return nil end
     local tier = 0
     if Modules.EventUpgradeCmds and Modules.EventUpgradeCmds.GetTier then
         local ok, t = pcall(Modules.EventUpgradeCmds.GetTier, Modules.UpgradesTypes.Id(trackKey))
@@ -4415,58 +4283,43 @@ local function GetTrackNextInfo(trackKey)
         end
     end
     local maxTier = #row.Powers
-    if tier >= maxTier then
-        return nil
-    end
+    if tier >= maxTier then return nil end
     local baseCost = row.Costs[tier + 1]
-    if not baseCost then
-        return nil
-    end
+    if not baseCost then return nil end
     local liveCost = math.max(1, math.ceil(baseCost * GetUpgradeCostMult()))
     return { track = trackKey, nextTier = tier + 1, baseCost = baseCost, cost = liveCost }
 end
 
-local function StepUpgrades(plot, buttons)
-    if not Config.AutoUpgrades or not plot or not Modules.UpgradesTypes or not Modules.PumpkinButtonsUtil then
-        return
-    end
+local function StepUpgrades(plot, buttons, tycoonComplete)
+    if not Config.AutoUpgrades or not plot or not Modules.UpgradesTypes or not Modules.PumpkinButtonsUtil then return end
     local now = os.clock()
-    if (now - (Runtime.Cache.LastUpgradesStepAt or 0)) < 1.5 then
-        return
-    end
+    if (now - (Runtime.Cache.LastUpgradesStepAt or 0)) < 1.5 then return end
     Runtime.Cache.LastUpgradesStepAt = now
 
     local machineButton = Modules.UpgradesTypes.BUTTON or "UpgradeMachine"
-    if not Modules.PumpkinButtonsUtil.Owned(buttons, machineButton) then
-        return
-    end
+    if not Modules.PumpkinButtonsUtil.Owned(buttons, machineButton) then return end
 
     local tokens = GetCurrency((PT and PT.TOKENS) or "PumpkinTokens")
     Runtime.Stats.Tokens = tokens
-    if tokens <= 0 then
-        return
-    end
-    if Runtime.Cache.AllUpgradesMaxed and (now - (Runtime.Cache.AllUpgradesMaxedAt or 0)) < 15.0 then
-        return
-    end
+    if tokens <= 0 then return end
+    if Runtime.Cache.AllUpgradesMaxed and (now - (Runtime.Cache.AllUpgradesMaxedAt or 0)) < 15.0 then return end
 
     local catchupRatio = tonumber(Config.UpgradeCheapCatchupRatio) or 0
     local maxCheapTier1 = tonumber(Config.UpgradeCheapTier1MaxBaseCost) or 50
+    local prioList = (tycoonComplete and type(Config.UpgradePriorityPostComplete) == "table" and Config.UpgradePriorityPostComplete)
+        or Config.UpgradePriority
+        or {}
     local maxBuys = 15
     for _ = 1, maxBuys do
-        if not IsRunning() then
-            break
-        end
+        if not IsRunning() then break end
         tokens = GetCurrency((PT and PT.TOKENS) or "PumpkinTokens")
         Runtime.Stats.Tokens = tokens
-        if tokens <= 0 then
-            break
-        end
+        if tokens <= 0 then break end
 
         local infos = {}
         local pendingCheapTier1 = nil
         local topCandidate = nil
-        for _, trackKey in ipairs(Config.UpgradePriority or {}) do
+        for _, trackKey in ipairs(prioList) do
             local info = GetTrackNextInfo(trackKey)
             if info then
                 table.insert(infos, info)
@@ -4509,14 +4362,10 @@ local function StepUpgrades(plot, buttons)
             end
         end
 
-        if not selected then
-            break
-        end
+        if not selected then break end
 
         local ok, res = pcall(plot.Invoke, plot, NET.UpgradeBuy, selected.track)
-        if not ok or res == false then
-            break
-        end
+        if not ok or res == false then break end
         Runtime.Stats.Tokens = GetCurrency((PT and PT.TOKENS) or "PumpkinTokens")
         Log("INFO", "Upgraded [%s] to Tier %d for %s Tokens", selected.track, selected.nextTier, tostring(selected.cost))
         task.wait(0.04)
@@ -4527,9 +4376,7 @@ end
 -- 10. CONSUMABLE BOOSTS, HOT COCOA STAND & FLANNEL GIFTS
 -- ============================================================================
 local function GetBoostTimerSeconds(boostId)
-    if not Modules.BoostCmds or not Modules.BoostCmds.GetTimer then
-        return 0
-    end
+    if not Modules.BoostCmds or not Modules.BoostCmds.GetTimer then return 0 end
     local ok, sec = pcall(Modules.BoostCmds.GetTimer, boostId)
     return (ok and type(sec) == "number") and sec or 0
 end
@@ -4538,36 +4385,55 @@ function Runtime.Helpers.GetMaxBoostTier(plot)
     local bUtil = Modules.PumpkinBoostsUtil
     if bUtil and type(bUtil.PlayerMaxTier) == "function" then
         local ok, t = pcall(bUtil.PlayerMaxTier, LocalPlayer)
-        if ok and type(t) == "number" and t >= 1 then
-            return math.clamp(math.floor(t), 1, 3)
-        end
+        if ok and type(t) == "number" and t >= 1 then return math.clamp(math.floor(t), 1, 3) end
     end
     if bUtil and type(bUtil.MaxTier) == "function" and plot then
         local ok, t = pcall(bUtil.MaxTier, plot)
-        if ok and type(t) == "number" and t >= 1 then
-            return math.clamp(math.floor(t), 1, 3)
-        end
+        if ok and type(t) == "number" and t >= 1 then return math.clamp(math.floor(t), 1, 3) end
     end
     return Runtime.Helpers.IsPlotPart2Active(plot) and 3 or 2
 end
 
+function Runtime.Helpers.IsConsumableBoostAllowed(itemName, tier)
+    local cfg = Config.AllowedConsumableBoosts
+    if type(cfg) ~= "table" then return true end
+    local rule = cfg[itemName]
+    if rule == nil then return true end
+    if type(rule) == "boolean" then return rule end
+    if type(rule) == "table" then
+        local t = math.floor(tonumber(tier) or 1)
+        if type(rule[t]) == "boolean" then return rule[t] end
+        local tStr = tostring(t)
+        if type(rule[tStr]) == "boolean" then return rule[tStr] end
+        if type(rule["T" .. tStr]) == "boolean" then return rule["T" .. tStr] end
+        if type(rule["Tier" .. tStr]) == "boolean" then return rule["Tier" .. tStr] end
+        return true
+    end
+    return true
+end
+
 local function StepConsumableBoosts(plot)
-    if not Config.AutoConsumeBoosts or not Modules.PumpkinBoostsUtil or not Modules.Save or not Modules.Network then
-        return
-    end
+    if not Config.AutoConsumeBoosts or not Modules.PumpkinBoostsUtil or not Modules.Save or not Modules.Network then return end
     local now = os.clock()
-    if (now - (Runtime.Cache.LastBoostsStepAt or 0)) < 1.5 then
-        return
-    end
+    if (now - (Runtime.Cache.LastBoostsStepAt or 0)) < 1.5 then return end
     Runtime.Cache.LastBoostsStepAt = now
 
     local threshold = tonumber(Config.BoostRefreshSeconds) or 15
     local maxTier = Runtime.Helpers.GetMaxBoostTier(plot)
     local itemsMap = Modules.PumpkinBoostsUtil.ITEMS or {}
     local activeTierByAxis = {}
+    local maxAllowedByAxis = {}
     local anyNeedsCheck = false
     for axis, itemName in pairs(itemsMap) do
-        if Config.AllowedConsumableBoosts[itemName] ~= false then
+        local maxAllowedTier = 0
+        for tier = maxTier, 1, -1 do
+            if Runtime.Helpers.IsConsumableBoostAllowed(itemName, tier) then
+                maxAllowedTier = tier
+                break
+            end
+        end
+        maxAllowedByAxis[axis] = maxAllowedTier
+        if maxAllowedTier > 0 then
             local activeTier = 0
             for tier = maxTier, 1, -1 do
                 local boostId = Modules.PumpkinBoostsUtil.Id(axis, tier)
@@ -4577,43 +4443,40 @@ local function StepConsumableBoosts(plot)
                 end
             end
             activeTierByAxis[axis] = activeTier
-            if activeTier < maxTier then
+            if activeTier < maxAllowedTier then
                 anyNeedsCheck = true
             end
         end
     end
-    if not anyNeedsCheck then
-        return
-    end
+    if not anyNeedsCheck then return end
 
-    local okSave, saveData = pcall(Modules.Save.Get)
-    local consumables = okSave and saveData and saveData.Inventory and saveData.Inventory.Consumable
-    if type(consumables) ~= "table" or next(consumables) == nil then
-        return
-    end
+    local consumables = Runtime.Helpers.GetSaveInventory("Consumable")
+    if not consumables or next(consumables) == nil then return end
 
     local itemToAxis = {}
     for axis, itemName in pairs(itemsMap) do
         itemToAxis[itemName] = axis
     end
 
-    -- Collect highest-tier matching event consumable per axis (Tier 3 > Tier 2 > Tier 1)
+    -- Collect highest allowed-tier matching event consumable per axis (Tier 3 > Tier 2 > Tier 1)
     local bestByAxis = {}
     for uid, data in pairs(consumables) do
         if type(data) == "table" then
             local itemName = tostring(data.id or data._id or "")
             local axis = itemToAxis[itemName]
-            if axis and Config.AllowedConsumableBoosts[itemName] ~= false then
-                local tier = math.clamp(math.floor(tonumber(data.tn or data.tier or 1) or 1), 1, maxTier)
-                local prev = bestByAxis[axis]
-                if not prev or tier > prev.tier then
-                    bestByAxis[axis] = {
-                        uid = tostring(uid),
-                        itemName = itemName,
-                        axis = axis,
-                        tier = tier,
-                        boostId = Modules.PumpkinBoostsUtil.Id(axis, tier),
-                    }
+            if axis and (maxAllowedByAxis[axis] or 0) > 0 then
+                local rawTier = math.floor(tonumber(data.tn or data.tier or 1) or 1)
+                if rawTier >= 1 and rawTier <= maxTier and Runtime.Helpers.IsConsumableBoostAllowed(itemName, rawTier) then
+                    local prev = bestByAxis[axis]
+                    if not prev or rawTier > prev.tier then
+                        bestByAxis[axis] = {
+                            uid = tostring(uid),
+                            itemName = itemName,
+                            axis = axis,
+                            tier = rawTier,
+                            boostId = Modules.PumpkinBoostsUtil.Id(axis, rawTier),
+                        }
+                    end
                 end
             end
         end
@@ -4624,9 +4487,7 @@ local function StepConsumableBoosts(plot)
         table.insert(ordered, cand)
     end
     table.sort(ordered, function(a, b)
-        if a.tier ~= b.tier then
-            return a.tier > b.tier
-        end
+        if a.tier ~= b.tier then return a.tier > b.tier end
         return a.axis < b.axis
     end)
 
@@ -4647,18 +4508,12 @@ end
 
 function Runtime.Helpers.GetActiveFruitCount(targetFruitId)
     local fCmds = Modules.FruitCmds
-    if not fCmds or type(fCmds.GetActiveFruits) ~= "function" then
-        return 0
-    end
+    if not fCmds or type(fCmds.GetActiveFruits) ~= "function" then return 0 end
     local ok, active = pcall(fCmds.GetActiveFruits)
-    if not ok or type(active) ~= "table" then
-        return 0
-    end
+    if not ok or type(active) ~= "table" then return 0 end
     if type(targetFruitId) == "string" then
         local entry = active[targetFruitId]
-        if type(entry) ~= "table" then
-            return 0
-        end
+        if type(entry) ~= "table" then return 0 end
         local sCnt = type(entry.Shiny) == "table" and #entry.Shiny or 0
         local nCnt = type(entry.Normal) == "table" and #entry.Normal or 0
         return sCnt + nCnt
@@ -4674,13 +4529,9 @@ end
 
 function Runtime.Helpers.StepConsumeFruits()
     local fCmds = Modules.FruitCmds
-    if not Config.AutoConsumeFruits or not fCmds or not Modules.Save or type(fCmds.Consume) ~= "function" then
-        return
-    end
+    if not Config.AutoConsumeFruits or not fCmds or not Modules.Save or type(fCmds.Consume) ~= "function" then return end
     local now = os.clock()
-    if (now - (Runtime.Cache.LastFruitsStepAt or 0)) < 1.5 then
-        return
-    end
+    if (now - (Runtime.Cache.LastFruitsStepAt or 0)) < 1.5 then return end
     Runtime.Cache.LastFruitsStepAt = now
 
     local targetStack = math.clamp(math.floor(tonumber(Config.FruitTargetStack) or 20), 1, 20)
@@ -4694,12 +4545,18 @@ function Runtime.Helpers.StepConsumeFruits()
     local cooldownSec = math.max(2, tonumber(Config.FruitConsumeCooldownSec) or 6)
     local allowed = Config.AllowedFruits
 
+    local rejectBackoff = Runtime.Cache.FruitRejectBackoff
+    if type(rejectBackoff) ~= "table" then
+        rejectBackoff = {}
+        Runtime.Cache.FruitRejectBackoff = rejectBackoff
+    end
+
     if type(allowed) == "table" then
         local anyFruitNeedsEat = false
         for fruitId, isAllowed in pairs(allowed) do
             if isAllowed == true then
-                local lastAt = Runtime.Cache.FruitConsumeCooldown[fruitId] or 0
-                if (now - lastAt) >= cooldownSec then
+                local nextAt = Runtime.Cache.FruitConsumeCooldown[fruitId] or 0
+                if now >= nextAt then
                     local activeCnt = Runtime.Helpers.GetActiveFruitCount(fruitId)
                     local missing = targetStack - activeCnt
                     if missing > 0 and (activeCnt == 0 or missing >= minMissing) then
@@ -4709,16 +4566,11 @@ function Runtime.Helpers.StepConsumeFruits()
                 end
             end
         end
-        if not anyFruitNeedsEat then
-            return
-        end
+        if not anyFruitNeedsEat then return end
     end
 
-    local okSave, saveData = pcall(Modules.Save.Get)
-    local invFruits = okSave and type(saveData) == "table" and saveData.Inventory and saveData.Inventory.Fruit
-    if type(invFruits) ~= "table" or next(invFruits) == nil then
-        return
-    end
+    local invFruits = Runtime.Helpers.GetSaveInventory("Fruit")
+    if not invFruits or next(invFruits) == nil then return end
 
     local stacks = {}
     for uid, data in pairs(invFruits) do
@@ -4732,22 +4584,28 @@ function Runtime.Helpers.StepConsumeFruits()
             })
         end
     end
-    if #stacks == 0 then
-        return
-    end
+    if #stacks == 0 then return end
     table.sort(stacks, function(a, b)
-        if a.id ~= b.id then
-            return a.id < b.id
-        end
-        if a.shiny ~= b.shiny then
-            return a.shiny and not b.shiny
-        end
+        if a.id ~= b.id then return a.id < b.id end
+        if a.shiny ~= b.shiny then return a.shiny and not b.shiny end
         return a.uid < b.uid
     end)
 
+    local function TryConsumeAndConfirm(uid, fruitId, amt, beforeCnt)
+        local cOk = pcall(fCmds.Consume, uid, amt)
+        if not cOk then return beforeCnt end
+        local deadline = os.clock() + 0.45
+        local cur = Runtime.Helpers.GetActiveFruitCount(fruitId)
+        while IsRunning() and cur <= beforeCnt and os.clock() < deadline do
+            task.wait(0.05)
+            cur = Runtime.Helpers.GetActiveFruitCount(fruitId)
+        end
+        return cur
+    end
+
     for _, st in ipairs(stacks) do
-        local lastAt = Runtime.Cache.FruitConsumeCooldown[st.id] or 0
-        if (now - lastAt) >= cooldownSec then
+        local nextAt = Runtime.Cache.FruitConsumeCooldown[st.id] or 0
+        if os.clock() >= nextAt then
             local activeCnt = Runtime.Helpers.GetActiveFruitCount(st.id)
             local missing = targetStack - activeCnt
             if missing > 0 and (activeCnt == 0 or missing >= minMissing) then
@@ -4760,12 +4618,25 @@ function Runtime.Helpers.StepConsumeFruits()
                 end
                 local eatAmt = math.min(missing, maxCan, st.amt)
                 if eatAmt >= 1 then
-                    local cOk = pcall(fCmds.Consume, st.uid, eatAmt)
-                    if cOk then
-                        Runtime.Cache.FruitConsumeCooldown[st.id] = now
+                    local afterCnt = TryConsumeAndConfirm(st.uid, st.id, eatAmt, activeCnt)
+                    if afterCnt <= activeCnt and eatAmt > 1 then
+                        -- Server queue may sit closer to cap than client timer (client/server drift); retry with 1x
+                        afterCnt = TryConsumeAndConfirm(st.uid, st.id, 1, activeCnt)
+                    end
+                    if afterCnt > activeCnt then
+                        rejectBackoff[st.id] = 0
+                        Runtime.Cache.FruitConsumeCooldown[st.id] = os.clock() + cooldownSec
                         Log("INFO", "Consumed %dx %s (%d->%d/%d)",
-                            eatAmt, st.id, activeCnt, activeCnt + eatAmt, targetStack)
-                        task.wait(0.05)
+                            afterCnt - activeCnt, st.id, activeCnt, afterCnt, targetStack)
+                    else
+                        local prevBo = tonumber(rejectBackoff[st.id]) or 0
+                        local nextBo = (prevBo <= 0) and 30 or math.min(120, prevBo * 2)
+                        rejectBackoff[st.id] = nextBo
+                        Runtime.Cache.FruitConsumeCooldown[st.id] = os.clock() + nextBo
+                        if prevBo == 0 then
+                            Log("DEBUG", "Fruit consume deferred [%s] (client=%d/%d, server full; retry in %ds)",
+                                st.id, activeCnt, targetStack, nextBo)
+                        end
                     end
                 end
             end
@@ -4774,53 +4645,46 @@ function Runtime.Helpers.StepConsumeFruits()
 end
 
 local function StepHotCocoaStand(plot, buttons, tycoonComplete)
-    if not Config.AutoCocoaStand or not plot or not Modules.PumpkinCocoaUtil or not Modules.PumpkinBoostsUtil then
-        return
-    end
-    if not Modules.PumpkinButtonsUtil or not Modules.PumpkinButtonsUtil.Owned(buttons, Modules.PumpkinCocoaUtil.BUTTON) then
-        return
-    end
+    if not Config.AutoCocoaStand or not plot or not Modules.PumpkinCocoaUtil or not Modules.PumpkinBoostsUtil then return end
+    if not Modules.PumpkinButtonsUtil or not Modules.PumpkinButtonsUtil.Owned(buttons, Modules.PumpkinCocoaUtil.BUTTON) then return end
     local now = os.clock()
-    if now - (Runtime.Cache.LastCocoaCheckAt or 0) < 1.5 then
-        return
-    end
+    if now - (Runtime.Cache.LastCocoaCheckAt or 0) < 1.5 then return end
     Runtime.Cache.LastCocoaCheckAt = now
 
-    if now - (Runtime.Cache.LastCocoaFailAt or 0) < 15 then
-        return
-    end
+    if now - (Runtime.Cache.LastCocoaFailAt or 0) < 15 then return end
 
-    if Config.CocoaRequireButtonsComplete and not tycoonComplete then
-        return
-    end
+    if Config.CocoaRequireButtonsComplete and not tycoonComplete then return end
 
     if not tycoonComplete then
         local minIncome = tonumber(Config.CocoaMinIncomePerSec) or 3500000
         local sustainedOk = Runtime.Helpers.IsIncomeSustainedForCocoa(minIncome)
-        if not sustainedOk then
-            return
-        end
+        if not sustainedOk then return end
     end
 
     local coins = GetCurrency((PT and PT.COIN) or "PumpkinTycoonCoins")
     Runtime.Stats.Coins = coins
     local activateCoins = tonumber(Config.CocoaActivateCoins) or 0
     local spareCoins = tonumber(Config.CocoaMinSpareCoins) or 0
-    if coins < activateCoins then
-        return
-    end
+    if coins < activateCoins then return end
 
     local tier = Modules.PumpkinCocoaUtil.TIER or 1
     local costPerMin = Modules.PumpkinCocoaUtil.CostPerMinute and Modules.PumpkinCocoaUtil.CostPerMinute(tier)
-    if type(costPerMin) ~= "number" or costPerMin <= 0 then
-        return
-    end
+    if type(costPerMin) ~= "number" or costPerMin <= 0 then return end
 
     local maintainSec = (tonumber(Config.CocoaMaintainMinutes) or 2) * 60
     local stepMin = math.max(1, math.floor(tonumber(Config.CocoaBuyStepMinutes) or 2))
     local tankSec = (Modules.PumpkinCocoaUtil.TankSeconds and Modules.PumpkinCocoaUtil.TankSeconds()) or (720 * 60)
     local liveCps = math.max(tonumber(Runtime.Stats.CoinsPerSec) or 0, select(1, Runtime.Helpers.GetWindowCps(60)) or 0)
     local buyBatchMin = (coins >= 15e9 and liveCps >= 20e6) and math.max(stepMin, 10) or stepMin
+    if tycoonComplete then
+        if coins >= 1e12 then
+            maintainSec = math.max(maintainSec, (tonumber(Config.CocoaPostCompleteMaintainMinutes) or 30) * 60)
+            buyBatchMin = math.max(buyBatchMin, math.floor(tonumber(Config.CocoaPostCompleteBatchMinutes) or 120))
+        elseif coins >= 50e9 then
+            maintainSec = math.max(maintainSec, 10 * 60)
+            buyBatchMin = math.max(buyBatchMin, 30)
+        end
+    end
 
     local axes
     if tycoonComplete then
@@ -4849,9 +4713,7 @@ local function StepHotCocoaStand(plot, buttons, tycoonComplete)
     local pending = {}
     local simCoins = coins
     for _, axis in ipairs(axes) do
-        if simCoins < activateCoins then
-            break
-        end
+        if simCoins < activateCoins then break end
         local boostId = Modules.PumpkinBoostsUtil.Id(axis, tier)
         local validOffer = (not Modules.PumpkinCocoaUtil.Offer) or (Modules.PumpkinCocoaUtil.Offer(boostId) ~= nil)
         if validOffer then
@@ -4870,15 +4732,11 @@ local function StepHotCocoaStand(plot, buttons, tycoonComplete)
             end
         end
     end
-    if #pending == 0 then
-        return
-    end
+    if #pending == 0 then return end
 
     WithMachinePad(plot, Modules.PumpkinCocoaUtil.MACHINE, Modules.PumpkinCocoaUtil.Range, function()
         for _, req in ipairs(pending) do
-            if not IsRunning() then
-                break
-            end
+            if not IsRunning() then break end
             local ok, res, reason = pcall(plot.Invoke, plot, NET.CocoaBuyTime, req.boostId, req.buyMin)
             if ok and res == true then
                 Runtime.Cache.LastCocoaFailAt = 0
@@ -4898,127 +4756,56 @@ end
 
 local function BuildGiftPositions(amount)
     if Modules.LootboxLocation and Modules.LootboxLocation.ComputePositions and Modules.LootboxTypes then
-        local ok, posList = pcall(
-            Modules.LootboxLocation.ComputePositions,
-            Modules.LootboxTypes.PlacementConfig,
-            amount,
-            {}
-        )
-        if ok and type(posList) == "table" and #posList == amount then
-            return posList
-        end
+        local ok, posList = pcall(Modules.LootboxLocation.ComputePositions, Modules.LootboxTypes.PlacementConfig, amount, {})
+        if ok and type(posList) == "table" and #posList == amount then return posList end
     end
-
-    local char, hrp = GetCharacter()
-    if not hrp then
-        return nil
-    end
-    local center = hrp.Position
-    local rayParams = RaycastParams.new()
-    rayParams.FilterType = Enum.RaycastFilterType.Exclude
-    rayParams.FilterDescendantsInstances = char and { char } or {}
-
-    local positions = {}
-    local spacing = (Modules.LootboxTypes and Modules.LootboxTypes.PlacementConfig and tonumber(Modules.LootboxTypes.PlacementConfig.eggSpacingRadius)) or 3.5
-    local radius = (amount > 1) and math.max(10, spacing / math.sin(math.pi / amount) + 1) or 10
+    local _, hrp = GetCharacter()
+    if not hrp then return nil end
+    local center, positions = hrp.Position, {}
     for i = 1, amount do
-        local angle = (math.pi * 2 * i) / amount
-        local rx = center.X + math.cos(angle) * radius
-        local rz = center.Z + math.sin(angle) * radius
-        local hit = Workspace:Raycast(Vector3.new(rx, center.Y + 15, rz), Vector3.new(0, -80, 0), rayParams)
-        local gy = hit and hit.Position.Y or (center.Y - 3)
-        table.insert(positions, Vector3.new(rx, gy, rz))
+        local a = (math.pi * 2 * i) / amount
+        positions[i] = Vector3.new(center.X + math.cos(a) * 10, center.Y - 3, center.Z + math.sin(a) * 10)
     end
     return positions
 end
 
 local function StepOpenFlannelGifts()
-    if not Config.AutoOpenGifts or not Modules.Network then
-        return
-    end
-    if Workspace:GetAttribute("PumpkinTycoonGiftOpener") ~= true then
-        return
-    end
+    if not Config.AutoOpenGifts or not Modules.Network then return end
+    if Workspace:GetAttribute("PumpkinTycoonGiftOpener") ~= true then return end
     if Modules.PumpkinBoostsUtil and type(Modules.PumpkinBoostsUtil.Enabled) == "function" then
         local okB, bEnabled = pcall(Modules.PumpkinBoostsUtil.Enabled)
-        if okB and not bEnabled then
-            return
-        end
+        if okB and not bEnabled then return end
     end
     local now = os.clock()
     if (now - (Runtime.Cache.LastGiftsStepAt or 0)) < 1.5 and (now - (Runtime.Cache.LastGiftAttemptAt or 0)) >= 0.5 then
-        -- Throttle idle polling to 1.5s unless we just opened a gift batch with more waiting
-        if not Runtime.Cache.HasMoreGiftsPending then
-            return
-        end
+        if not Runtime.Cache.HasMoreGiftsPending then return end
     end
-    if now - (Runtime.Cache.LastGiftAttemptAt or 0) < 0.25 then
-        return
-    end
+    if now - (Runtime.Cache.LastGiftAttemptAt or 0) < 0.25 then return end
     Runtime.Cache.LastGiftsStepAt = now
 
-    local giftName = (Modules.PumpkinGiftUtil and Modules.PumpkinGiftUtil.ID)
-        or (Modules.ButtonsTypes and Modules.ButtonsTypes.COMPLETION_GIFT)
-        or "Flannel Gift"
-    local giftUid, giftAmt = nil, 0
-
-    local readSaveOk = false
-    if Modules.Save and Modules.Save.Get then
-        local okSave, saveData = pcall(Modules.Save.Get)
-        if okSave and type(saveData) == "table" then
-            readSaveOk = true
-            local inv = saveData.Inventory
-            local boxes = type(inv) == "table" and inv.Lootbox or nil
-            if type(boxes) ~= "table" or next(boxes) == nil then
-                Runtime.Cache.GiftEmptyBoxesRef = boxes
-                Runtime.Cache.GiftBagDirty = false
-                Runtime.Cache.HasMoreGiftsPending = false
-                return
-            end
-            if Runtime.Cache.GiftEmptyBoxesRef == boxes and not Runtime.Cache.GiftBagDirty then
-                Runtime.Cache.HasMoreGiftsPending = false
-                return
-            end
-            for uid, d in pairs(boxes) do
-                if type(d) == "table" and (d.id == giftName or d._id == giftName) then
-                    local am = tonumber(d._am) or 1
-                    if am >= 1 then
-                        giftUid = tostring(uid)
-                        giftAmt = am
-                        break
-                    end
-                end
-            end
-            if not giftUid then
-                Runtime.Cache.GiftEmptyBoxesRef = boxes
-                Runtime.Cache.GiftBagDirty = false
-                Runtime.Cache.HasMoreGiftsPending = false
-                return
-            end
-        end
+    local boxes = Runtime.Helpers.GetSaveInventory("Lootbox")
+    if not boxes or next(boxes) == nil then
+        Runtime.Cache.GiftEmptyBoxesRef = boxes
+        Runtime.Cache.GiftBagDirty = false
+        Runtime.Cache.HasMoreGiftsPending = false
+        return
+    end
+    if Runtime.Cache.GiftEmptyBoxesRef == boxes and not Runtime.Cache.GiftBagDirty then
+        Runtime.Cache.HasMoreGiftsPending = false
+        return
     end
 
-    if not readSaveOk and Modules.LootboxItem then
-        pcall(function()
-            local list = Modules.LootboxItem(giftName):FindAny()
-            local first = list and list[1]
-            if first then
-                giftUid = first:GetUID()
-                giftAmt = first:GetAmount()
-            end
-        end)
-    end
-
+    local giftName, giftUid, giftAmt = Runtime.Helpers.ScanFlannelGiftBag(boxes)
     if not giftUid or giftAmt < 1 then
+        Runtime.Cache.GiftEmptyBoxesRef = boxes
+        Runtime.Cache.GiftBagDirty = false
         Runtime.Cache.HasMoreGiftsPending = false
         return
     end
 
     local count = math.clamp(math.floor(math.min(giftAmt, Config.GiftBatchAmount or 8)), 1, 8)
     local positions = BuildGiftPositions(count)
-    if not positions then
-        return
-    end
+    if not positions then return end
 
     -- Part 2 requires 4th arg cardShown matching LocalPlayer:GetAttribute("PumpkinTycoonGiftNets") == true
     local netsAttr = (Modules.PumpkinGiftUtil and Modules.PumpkinGiftUtil.NETS_ATTRIBUTE) or "PumpkinTycoonGiftNets"
@@ -5046,9 +4833,7 @@ end
 -- 11. EGG HATCHER (SMART EARLY BOOTSTRAP + POST-COMPLETION ZONE 5 EGG)
 -- ============================================================================
 local function SuppressEggAnimation()
-    if not Config.HatchDisableAnimation then
-        return
-    end
+    if not Config.HatchDisableAnimation then return end
     if Workspace:GetAttribute("GlobalInstantHatch") ~= true then
         pcall(Workspace.SetAttribute, Workspace, "GlobalInstantHatch", true)
     end
@@ -5069,9 +4854,7 @@ local function GetEggPrice(eggName)
     local mult2 = isPart2Egg and (tonumber(GetFlag("PumpkinTycoon_EggCostMultP2", 1)) or 1) or 1
     local effectiveMult = math.max(0.01, mult1 * mult2)
     local cacheKey = tostring(eggName) .. "|" .. tostring(effectiveMult)
-    if Runtime.Cache.EggCostCache[cacheKey] then
-        return Runtime.Cache.EggCostCache[cacheKey]
-    end
+    if Runtime.Cache.EggCostCache[cacheKey] then return Runtime.Cache.EggCostCache[cacheKey] end
     local dirEggs = Modules.Directory and Modules.Directory.Eggs
     local info = dirEggs and rawget(dirEggs, eggName)
     local cost = info and (info.overrideCost or info.cost)
@@ -5093,146 +4876,52 @@ local function GetEggPrice(eggName)
     return math.max(1, math.round((fallbacks[eggName] or 16000) * effectiveMult))
 end
 
-local function GetEggCommonPetId(eggName)
-    local dirEggs = Modules.Directory and Modules.Directory.Eggs
-    local info = dirEggs and rawget(dirEggs, eggName)
-    local bestPetId, bestWeight = nil, -1
-    if info and type(info.pets) == "table" then
-        for _, entry in ipairs(info.pets) do
-            local pname = type(entry) == "table" and entry[1] or nil
-            local weight = type(entry) == "table" and tonumber(entry[2]) or 0
-            if type(pname) == "string" and weight and weight > bestWeight then
-                bestWeight = weight
-                bestPetId = pname
-            end
-        end
-    end
-    return bestPetId
-end
-
 function Runtime.Helpers.IsDamagePart2Active()
     local ptd = Modules.PumpkinDamageUtil
     if ptd and type(ptd.Scope) == "function" then
         local okS, resS = pcall(ptd.Scope, LocalPlayer)
-        if okS and type(resS) == "boolean" then
-            return resS
-        end
+        if okS and type(resS) == "boolean" then return resS end
     end
     if ptd and type(ptd.Part2) == "function" then
         local okP, resP = pcall(ptd.Part2)
-        if okP and resP == true then
-            return true
-        end
+        if okP and resP == true then return true end
     end
     return Runtime.Cache.CriticalButtonsPart2 == true
 end
 
 function Runtime.Helpers.GetPetEventDamage(data, inst, pd)
-    if type(data) ~= "table" or type(data.id) ~= "string" then
-        return 0, false
-    end
+    if type(data) ~= "table" or type(data.id) ~= "string" then return 0, false end
     local ptd = Modules.PumpkinDamageUtil
-    local exLevel = (pd and type(pd.exclusiveLevel) == "number" and pd.exclusiveLevel > 0) and pd.exclusiveLevel or nil
-    if not exLevel then
-        if (pd and pd.gargantuan == true) or string.sub(data.id, 1, 11) == "Gargantuan " then
-            exLevel = 6
-        elseif (pd and pd.titanic == true) or string.sub(data.id, 1, 8) == "Titanic " then
-            exLevel = 5
-        elseif (pd and pd.huge == true) or string.sub(data.id, 1, 5) == "Huge " then
-            exLevel = 4
-        elseif inst and type(inst.GetExclusiveLevel) == "function" then
-            local okEx, lv = pcall(inst.GetExclusiveLevel, inst)
-            if okEx and type(lv) == "number" and lv > 0 then
-                exLevel = lv
-            end
-        end
+    if not inst and Modules.PetItem and type(Modules.PetItem.From) == "function" then
+        local okI, resI = pcall(Modules.PetItem.From, Modules.PetItem, data)
+        if okI and resI then inst = resI end
+    end
+
+    local chaseCat = Runtime.Helpers.GetChaseCategory(data.id, pd)
+    local exLevel = (pd and type(pd.exclusiveLevel) == "number" and pd.exclusiveLevel > 0) and pd.exclusiveLevel
+        or (chaseCat == "Gargantuan" and 6 or (chaseCat == "Titanic" and 5 or (chaseCat == "Huge" and 4 or nil)))
+    if not exLevel and inst and type(inst.GetExclusiveLevel) == "function" then
+        local okEx, lv = pcall(inst.GetExclusiveLevel, inst)
+        if okEx and type(lv) == "number" and lv > 0 then exLevel = lv end
     end
 
     if exLevel and exLevel > 0 then
         if inst and ptd and type(ptd.ExclusiveMult) == "function" then
             local okEm, em = pcall(ptd.ExclusiveMult, inst)
-            if okEm and type(em) == "number" and em > 0 then
-                return em, true
-            end
+            if okEm and type(em) == "number" and em > 0 then return em, true end
         end
-        if exLevel < 4 then
-            local cappedTbl = ptd and type(ptd.EXCLUSIVE_MULTS) == "table" and ptd.EXCLUSIVE_MULTS or nil
-            local mult = (cappedTbl and tonumber(cappedTbl[exLevel]))
-                or (exLevel == 1 and 0.55 or (exLevel == 2 and 0.60 or 0.65))
-            return mult, true
-        end
-        local chaseMults = nil
-        if ptd and type(ptd.ChaseMults) == "function" then
-            local okC, resC = pcall(ptd.ChaseMults)
-            if okC and type(resC) == "table" then
-                chaseMults = resC
-            end
-        end
-        local varMults = nil
-        if ptd and type(ptd.ExclusiveVariants) == "function" then
-            local okV, resV = pcall(ptd.ExclusiveVariants)
-            if okV and type(resV) == "table" then
-                varMults = resV
-            end
-        end
-        local idx = math.clamp(math.floor(exLevel), 4, 6) - 3
-        local baseMult = (chaseMults and tonumber(chaseMults[idx]))
-            or (idx == 1 and 1.1 or (idx == 2 and 2.0 or 4.0))
-        local varMult = 1
-        if data.pt == 1 then
-            varMult = varMult * ((varMults and tonumber(varMults[1])) or 1.1)
-        elseif data.pt == 2 then
-            varMult = varMult * ((varMults and tonumber(varMults[2])) or 1.25)
-        end
-        if data.sh == true then
-            varMult = varMult * ((varMults and tonumber(varMults[3])) or 1.3)
-        end
-        local mult = baseMult * varMult
-        local capMult = chaseMults and tonumber(chaseMults[idx + 1]) or nil
-        if capMult and capMult > 0 then
-            mult = math.min(mult, capMult)
-        end
-        return mult, true
+        return (exLevel == 6 and 4.0 or (exLevel == 5 and 2.0 or (exLevel == 4 and 1.1 or 0.6))), true
     end
 
-    local part2 = Runtime.Helpers.IsDamagePart2Active()
-    local evMap = Runtime.Cache.EventPetsRankMap
-    if (evMap == nil or Runtime.Cache.EventPetsRankMapPart2 ~= part2) and ptd and type(ptd.EventPets) == "function" then
-        local okMap, resMap = pcall(ptd.EventPets, part2)
-        if okMap and type(resMap) == "table" then
-            evMap = resMap
-            Runtime.Cache.EventPetsRankMap = resMap
-            if Runtime.Cache.EventPetsRankMapPart2 ~= part2 then
-                Runtime.Cache.EventPetsRankMapPart2 = part2
-                table.clear(Runtime.Cache.EggCommonEventDmgCache)
-            end
-        end
-    end
-
-    local rank = type(evMap) == "table" and evMap[data.id] or nil
-    if rank then
-        if ptd and type(ptd.PetHit) == "function" and inst then
-            local okHit, dmg = pcall(ptd.PetHit, inst, 0, nil, part2)
-            if okHit and type(dmg) == "number" and dmg > 0 then
-                return dmg, false
-            end
-        end
-        local flat = (ptd and type(ptd.Flat) == "function" and ptd.Flat()) or 10
-        local base = flat + math.max(1, 5 * (3 ^ math.max(0, rank - 1)))
-        local mult = (data.pt == 1 and 2 or (data.pt == 2 and 4 or 1)) * (data.sh == true and 2 or 1)
-        return math.ceil(base * mult), false
-    end
-
-    if type(evMap) == "table" then
-        return (ptd and type(ptd.Flat) == "function" and ptd.Flat()) or 10, false
+    if inst and ptd and type(ptd.PetHit) == "function" then
+        local okHit, dmg = pcall(ptd.PetHit, inst, 0, nil, Runtime.Helpers.IsDamagePart2Active())
+        if okHit and type(dmg) == "number" and dmg > 0 then return dmg, false end
     end
 
     local pw = 0
     if inst and inst.CalculatePower then
         local okP, val = pcall(inst.CalculatePower, inst)
-        if okP and type(val) == "number" then
-            pw = val
-        end
+        if okP and type(val) == "number" then pw = val end
     end
     if pw <= 0 and pd then
         pw = (type(pd.cachedPower) == "table" and tonumber(pd.cachedPower[1])) or tonumber(pd.power) or 1
@@ -5240,160 +4929,76 @@ function Runtime.Helpers.GetPetEventDamage(data, inst, pd)
     return pw, false
 end
 
-function Runtime.Helpers.GetEggCommonEventDamage(eggName)
+function Runtime.Helpers.GetEggEventDamages(eggName)
     local part2 = Runtime.Helpers.IsDamagePart2Active()
-    if Runtime.Cache.EggCommonEventDmgPart2 ~= part2 then
-        Runtime.Cache.EggCommonEventDmgPart2 = part2
-        table.clear(Runtime.Cache.EggCommonEventDmgCache)
+    if Runtime.Cache.EggEventDmgPart2 ~= part2 then
+        Runtime.Cache.EggEventDmgPart2 = part2
+        table.clear(Runtime.Cache.EggEventDmgCache)
     end
-    if Runtime.Cache.EggCommonEventDmgCache[eggName] ~= nil then
-        return Runtime.Cache.EggCommonEventDmgCache[eggName]
-    end
-    local bestPetId = GetEggCommonPetId(eggName)
-    local dmg = 0
-    if bestPetId then
-        local inst = nil
-        if Modules.PetItem and type(Modules.PetItem.From) == "function" then
-            local okI, resI = pcall(Modules.PetItem.From, Modules.PetItem, { id = bestPetId })
-            if okI and resI then
-                inst = resI
-            end
-        end
-        local petsDir = Modules.Directory and Modules.Directory.Pets
-        local pd = type(petsDir) == "table" and rawget(petsDir, bestPetId) or nil
-        dmg = select(1, Runtime.Helpers.GetPetEventDamage({ id = bestPetId }, inst, pd))
-    end
-    Runtime.Cache.EggCommonEventDmgCache[eggName] = dmg
-    return dmg
-end
+    local cached = Runtime.Cache.EggEventDmgCache[eggName]
+    if cached then return cached.common, cached.uncommon end
 
-function Runtime.Helpers.GetEggUncommonEventDamage(eggName)
-    local part2 = Runtime.Helpers.IsDamagePart2Active()
-    if Runtime.Cache.EggUncommonEventDmgPart2 ~= part2 then
-        Runtime.Cache.EggUncommonEventDmgPart2 = part2
-        Runtime.Cache.EggUncommonEventDmgCache = {}
-    end
-    local cache = Runtime.Cache.EggUncommonEventDmgCache
-    if not cache then
-        cache = {}
-        Runtime.Cache.EggUncommonEventDmgCache = cache
-    end
-    if cache[eggName] ~= nil then
-        return cache[eggName]
-    end
     local dirEggs = Modules.Directory and Modules.Directory.Eggs
     local info = dirEggs and rawget(dirEggs, eggName)
     local petsDir = Modules.Directory and Modules.Directory.Pets
-    local bestDmg = 0
+    local bestWeight, commonId, uncommonDmg = -1, nil, 0
     if info and type(info.pets) == "table" then
         for _, entry in ipairs(info.pets) do
             local pname = type(entry) == "table" and entry[1] or nil
             local weight = type(entry) == "table" and tonumber(entry[2]) or 0
-            -- Consider realistic bootstrap pets (weight >= 5%, e.g. 90% common & 10% uncommon such as Cocoa Husky R7)
-            if type(pname) == "string" and weight >= 5 then
-                local pd = type(petsDir) == "table" and rawget(petsDir, pname) or nil
-                local isChase = (pd and (pd.huge == true or pd.titanic == true or pd.gargantuan == true))
-                    or string.sub(pname, 1, 5) == "Huge "
-                    or string.sub(pname, 1, 8) == "Titanic "
-                    or string.sub(pname, 1, 11) == "Gargantuan "
-                if not isChase then
-                    local inst = nil
-                    if Modules.PetItem and type(Modules.PetItem.From) == "function" then
-                        local okI, resI = pcall(Modules.PetItem.From, Modules.PetItem, { id = pname })
-                        if okI and resI then
-                            inst = resI
+            if type(pname) == "string" then
+                if weight > bestWeight then
+                    bestWeight = weight
+                    commonId = pname
+                end
+                if weight >= 5 then
+                    local pd = type(petsDir) == "table" and rawget(petsDir, pname) or nil
+                    if not Runtime.Helpers.GetChaseCategory(pname, pd) then
+                        local dmg = select(1, Runtime.Helpers.GetPetEventDamage({ id = pname }, nil, pd))
+                        if type(dmg) == "number" and dmg > uncommonDmg then
+                            uncommonDmg = dmg
                         end
                     end
-                    local dmg = select(1, Runtime.Helpers.GetPetEventDamage({ id = pname }, inst, pd))
-                    if type(dmg) == "number" and dmg > bestDmg then
-                        bestDmg = dmg
-                    end
                 end
             end
         end
     end
-    cache[eggName] = bestDmg
-    return bestDmg
-end
 
-local function GetEggCommonPower(eggName)
-    if Runtime.Cache.EggBasePowerCache[eggName] ~= nil then
-        return Runtime.Cache.EggBasePowerCache[eggName]
+    local commonDmg = 0
+    if commonId then
+        local pd = type(petsDir) == "table" and rawget(petsDir, commonId) or nil
+        commonDmg = select(1, Runtime.Helpers.GetPetEventDamage({ id = commonId }, nil, pd))
     end
-    local bestPetId = GetEggCommonPetId(eggName)
-    local power = 0
-    if bestPetId then
-        if Modules.PetItem then
-            local okI, inst = pcall(Modules.PetItem, bestPetId, "preview", { id = bestPetId })
-            if okI and inst and inst.CalculatePower then
-                local okP, pw = pcall(inst.CalculatePower, inst)
-                if okP and type(pw) == "number" and pw > 0 then
-                    power = pw
-                end
-            end
-        end
-        if power <= 0 and Modules.Directory and Modules.Directory.Pets then
-            local pd = rawget(Modules.Directory.Pets, bestPetId)
-            if pd then
-                power = (type(pd.cachedPower) == "table" and tonumber(pd.cachedPower[1]))
-                    or tonumber(pd.power)
-                    or 0
-            end
-        end
-    end
-    Runtime.Cache.EggBasePowerCache[eggName] = power
-    return power
+    Runtime.Cache.EggEventDmgCache[eggName] = { common = commonDmg, uncommon = uncommonDmg }
+    return commonDmg, uncommonDmg
 end
 
 local function SafeDirLookup(dirTable, key)
-    if type(dirTable) ~= "table" or key == nil then
-        return nil
-    end
+    if type(dirTable) ~= "table" or key == nil then return nil end
     local rawVal = rawget(dirTable, key)
-    if rawVal ~= nil then
-        return rawVal
-    end
+    if rawVal ~= nil then return rawVal end
     if getmetatable(dirTable) ~= nil then
         local ok, val = pcall(function()
             return dirTable[key]
         end)
-        if ok then
-            return val
-        end
+        if ok then return val end
     end
     return nil
 end
 
 local function ResolvePetItem(uid)
     local petItemCls = Modules.PetItem
-    if not petItemCls or uid == nil or type(petItemCls.Get) ~= "function" then
-        return nil
-    end
+    if not petItemCls or uid == nil or type(petItemCls.Get) ~= "function" then return nil end
     local okG, inst = pcall(petItemCls.Get, petItemCls, uid)
-    if okG and inst then
-        return inst
-    end
+    if okG and inst then return inst end
     return nil
 end
 
 local function GetTeamPowerSnapshot(forceRefresh)
     local now = os.clock()
-    if not forceRefresh and Runtime.Cache.TeamPowerSnapshot and (now - Runtime.Cache.TeamPowerSnapshotAt) < 0.4 then
-        return Runtime.Cache.TeamPowerSnapshot
-    end
-    local maxEquip = 4
-    if Modules.PetCmds and Modules.PetCmds.GetMaxEquipped then
-        local okM, m = pcall(Modules.PetCmds.GetMaxEquipped)
-        if okM and type(m) == "number" and m >= 1 then
-            maxEquip = math.floor(m)
-        end
-    end
-
-    local okSave, saveData = false, nil
-    if Modules.Save and Modules.Save.Get then
-        okSave, saveData = pcall(Modules.Save.Get)
-    end
-    local invPets = okSave and type(saveData) == "table" and saveData.Inventory and saveData.Inventory.Pet
+    if not forceRefresh and Runtime.Cache.TeamPowerSnapshot and (now - Runtime.Cache.TeamPowerSnapshotAt) < 0.4 then return Runtime.Cache.TeamPowerSnapshot end
+    local maxEquip = Runtime.Helpers.GetMaxEquippedPets()
+    local invPets = Runtime.Helpers.GetSaveInventory("Pet")
     local petsDir = Modules.Directory and Modules.Directory.Pets
     local entries = Runtime.Cache.TeamEntriesScratch
     if not entries then
@@ -5469,13 +5074,9 @@ local function GetTeamPowerSnapshot(forceRefresh)
 end
 
 local function EnsureBestPetsEquipped(force)
-    if not Config.AutoEquipBestPets or not Modules.PetCmds then
-        return
-    end
+    if not Config.AutoEquipBestPets or not Modules.PetCmds then return end
     local now = os.clock()
-    if not force and (now - (Runtime.Cache.LastEquipBestAt or 0)) < 0.6 then
-        return
-    end
+    if not force and (now - (Runtime.Cache.LastEquipBestAt or 0)) < 0.6 then return end
     Runtime.Cache.LastEquipBestAt = now
     if Modules.PetCmds.IsAutoEquipEnabled and Modules.PetCmds.ToggleAutoEquip then
         local okA, enabled = pcall(Modules.PetCmds.IsAutoEquipEnabled)
@@ -5489,22 +5090,14 @@ local function EnsureBestPetsEquipped(force)
 end
 
 local function IsEggOnMyIsland(egg, islandBox, pos)
-    if not islandBox or not PT or not PT.OnIsland then
-        return true
-    end
-    if pos and PT.OnIsland(islandBox.cf, islandBox.size, pos) then
-        return true
-    end
-    if egg and egg._model and IsOnMyIsland(egg._model, islandBox) then
-        return true
-    end
+    if not islandBox or not PT or not PT.OnIsland then return true end
+    if pos and PT.OnIsland(islandBox.cf, islandBox.size, pos) then return true end
+    if egg and egg._model and IsOnMyIsland(egg._model, islandBox) then return true end
     return false
 end
 
 local function ResolveTargetEgg(plot, buttons, preferHighestUnlocked)
-    if not plot or not Modules.CustomEggsCmds or not Modules.CustomEggsCmds.All then
-        return nil, nil, nil, nil
-    end
+    if not plot or not Modules.CustomEggsCmds or not Modules.CustomEggsCmds.All then return nil, nil, nil, nil end
 
     local part2 = Runtime.Helpers.IsPlotPart2Active(plot)
     local sig = tostring(plot:GetId())
@@ -5529,9 +5122,7 @@ local function ResolveTargetEgg(plot, buttons, preferHighestUnlocked)
     end
 
     local ok, allEggs = pcall(Modules.CustomEggsCmds.All)
-    if not ok or type(allEggs) ~= "table" then
-        return nil, nil, nil, nil
-    end
+    if not ok or type(allEggs) ~= "table" then return nil, nil, nil, nil end
 
     local islandBox = GetIslandBox(plot)
     local ownedEggNames = {}
@@ -5625,9 +5216,7 @@ end
 function Runtime.Helpers.GetMaxHatchCount()
     if Modules.EggCmds and Modules.EggCmds.GetMaxHatch then
         local ok, m = pcall(Modules.EggCmds.GetMaxHatch)
-        if ok and type(m) == "number" and m >= 1 then
-            return math.floor(m)
-        end
+        if ok and type(m) == "number" and m >= 1 then return math.floor(m) end
     end
     return 1
 end
@@ -5653,21 +5242,16 @@ function Runtime.Helpers.GetEarlyHatchMaxCoins(eggCost, lowHatch, maxEquip)
 end
 
 EvaluateEarlyBootstrap = function(plot, buttons)
-    if not Config.AutoHatch or not Config.AutoEarlyHatchForDamage or not plot then
+    local function noBootstrap()
         Runtime.Cache.ReserveEarlyEggCost = 0
         return false
     end
+    if not Config.AutoHatch or not Config.AutoEarlyHatchForDamage or not plot then return noBootstrap() end
     local eggUid, eggName, eggPos, eggMax = ResolveTargetEgg(plot, buttons, true)
-    if not eggUid or not eggPos then
-        Runtime.Cache.ReserveEarlyEggCost = 0
-        return false
-    end
+    if not eggUid or not eggPos then return noBootstrap() end
 
     local eggCost = GetEggPrice(eggName)
-    local commonDmg = Runtime.Helpers.GetEggCommonEventDamage(eggName)
-    if commonDmg <= 0 then
-        commonDmg = GetEggCommonPower(eggName)
-    end
+    local commonDmg, uncommonDmg = Runtime.Helpers.GetEggEventDamages(eggName)
     local snap = GetTeamPowerSnapshot(false)
     local goldReady = Config.AutoMakeGold ~= false and Runtime.Helpers.HasCraftMachineUnlocked("GoldMachine", plot, buttons)
     local rainbowReady = Config.AutoMakeRainbow ~= false and Runtime.Helpers.HasCraftMachineUnlocked("RainbowMachine", plot, buttons)
@@ -5685,23 +5269,15 @@ EvaluateEarlyBootstrap = function(plot, buttons)
             Runtime.Cache.ReserveEarlyEggCost = (Config.EarlyHatchReserveCoins ~= false) and eggCost or 0
             return true, eggUid, eggName, eggPos, eggMax, eggCost, (maxBasic - hatchedHere)
         end
-        if not craftUpgradeEnabled then
-            Runtime.Cache.ReserveEarlyEggCost = 0
-            return false
-        end
-        -- Gold/Rainbow craft upgrade mode is active: fall through to craft-upgrade budget instead of deadlocking at maxBasic
+        if not craftUpgradeEnabled then return noBootstrap() end
     end
 
-    if not craftUpgradeEnabled then
-        Runtime.Cache.ReserveEarlyEggCost = 0
-        return false
-    end
+    if not craftUpgradeEnabled then return noBootstrap() end
 
     -- Scale craft bootstrap targets to maxHatch & Part 2 Eggs (full Rainbow team on Part 2 Eggs 6-8 even on low-hatch accounts)
     local maxHatch = Runtime.Helpers.GetMaxHatchCount()
     local lowHatch = (maxHatch < 4)
     local isPart2Egg = (type(eggCost) == "number" and eggCost >= 100000)
-    local uncommonDmg = Runtime.Helpers.GetEggUncommonEventDamage(eggName)
     local fullRainbowTarget = rainbowReady and (not lowHatch or isPart2Egg)
     local variantCap = fullRainbowTarget
         and math.min(4, tonumber(Config.EarlyHatchTargetVariantMult) or 4)
@@ -5723,38 +5299,31 @@ EvaluateEarlyBootstrap = function(plot, buttons)
     local needsUpgrade = needsBasic
         or (snap.weakest < (targetWeakDmg * 0.99))
         or ((goldReady or rainbowReady) and snap.bestNonHuge < (targetBestDmg * 0.99))
-    if not needsUpgrade then
-        Runtime.Cache.ReserveEarlyEggCost = 0
-        return false
-    end
+    if not needsUpgrade then return noBootstrap() end
 
     local maxCoins = Runtime.Helpers.GetEarlyHatchMaxCoins(eggCost, lowHatch, snap.maxEquip)
     local spentCoins = Runtime.Cache.EarlyCoinsSpentByEgg[eggName] or 0
     local budgetRem = maxCoins - spentCoins
-    if budgetRem < eggCost then
-        Runtime.Cache.ReserveEarlyEggCost = 0
-        return false
-    end
+    if budgetRem < eggCost then return noBootstrap() end
 
     local coins = GetCurrency((PT and PT.COIN) or "PumpkinTycoonCoins")
     local minBalRatio = math.max(1, tonumber(Config.EarlyHatchMinBalanceRatio) or 20)
-    if coins < (eggCost * minBalRatio) then
-        Runtime.Cache.ReserveEarlyEggCost = 0
-        return false
-    end
+    if coins < (eggCost * minBalRatio) then return noBootstrap() end
 
     local minCritBtn = GetMinCriticalButtonPrice(buttons, plot)
     local maxShare = math.clamp(tonumber(Config.EarlyHatchMaxShareOfNextButton) or 0.25, 0.05, 0.95)
     -- Only pause near next critical button if remaining early-hatch budget meaningfully affects buying it (> 5% of button price)
     if minCritBtn and minCritBtn > 0 and coins >= (minCritBtn * (1 - maxShare)) and budgetRem > (minCritBtn * 0.05) then
-        Runtime.Cache.ReserveEarlyEggCost = 0
-        return false
+        return noBootstrap()
     end
 
     Runtime.Cache.ReserveEarlyEggCost = (Config.EarlyHatchReserveCoins ~= false) and eggCost or 0
     local remainingCap = math.max(1, math.floor(budgetRem / eggCost))
     return true, eggUid, eggName, eggPos, eggMax, eggCost, remainingCap
 end
+
+-- Plot-local offset from Golden Ridge Egg to the simultaneous Hatch + Zone 8 Farm sweet spot (works on any plot/rotation)
+local GOLDEN_RIDGE_OVERLAP_LOCAL_OFFSET = Vector3.new(16.17, -4.13, 5.76)
 
 local function ComputeEggOverlapPos(eggPos, maxDist)
     local targetPos = activeFarmTarget and activeFarmTarget.model and activeFarmTarget.model.Parent and activeFarmTarget.pos
@@ -5776,10 +5345,23 @@ local function ComputeEggOverlapPos(eggPos, maxDist)
     return eggPos
 end
 
+function Runtime.Helpers.GetGoldenRidgeStandPos(plot, eggPos)
+    if not plot or typeof(eggPos) ~= "Vector3" then return nil end
+    local okCf, plotCf = pcall(plot.GetCFrame, plot)
+    if not okCf or typeof(plotCf) ~= "CFrame" then return nil end
+    return eggPos + plotCf:VectorToWorldSpace(GOLDEN_RIDGE_OVERLAP_LOCAL_OFFSET)
+end
+
 local function StepHatch(plot, buttons, tycoonComplete)
-    if not Config.AutoHatch or not plot or Runtime.Stats.FightingTurkeyBoss then
+    local function stopHatch()
+        Runtime.Cache.HatchInFlight = false
         Runtime.Stats.IsHatching = false
         Runtime.Cache.ActiveHatchEggPos = nil
+        Runtime.Cache.ActiveHatchStandPos = nil
+    end
+
+    if not Config.AutoHatch or not plot or Runtime.Stats.FightingTurkeyBoss or Runtime.Cache.WildRerollActive then
+        stopHatch()
         return
     end
 
@@ -5790,8 +5372,7 @@ local function StepHatch(plot, buttons, tycoonComplete)
         local needEarly
         needEarly, eggUid, eggName, eggPos, eggMax, eggCost, remainingCap = EvaluateEarlyBootstrap(plot, buttons)
         if not needEarly then
-            Runtime.Stats.IsHatching = false
-            Runtime.Cache.ActiveHatchEggPos = nil
+            stopHatch()
             return
         end
         isEarly = true
@@ -5799,8 +5380,7 @@ local function StepHatch(plot, buttons, tycoonComplete)
         Runtime.Cache.ReserveEarlyEggCost = 0
         eggUid, eggName, eggPos, eggMax = ResolveTargetEgg(plot, buttons, false)
         if not eggUid or not eggPos then
-            Runtime.Stats.IsHatching = false
-            Runtime.Cache.ActiveHatchEggPos = nil
+            stopHatch()
             return
         end
         eggCost = GetEggPrice(eggName)
@@ -5816,27 +5396,20 @@ local function StepHatch(plot, buttons, tycoonComplete)
 
     local coins = GetCurrency((PT and PT.COIN) or "PumpkinTycoonCoins")
     local batchMult = isEarly and 1 or (tonumber(Config.HatchMinBatchMultiplier) or 1)
-    local minReq = eggCost * batchMult
-    if coins < minReq then
-        Runtime.Stats.IsHatching = false
-        Runtime.Cache.ActiveHatchEggPos = nil
+    if coins < (eggCost * batchMult) then
+        stopHatch()
         return
     end
 
     local batch = math.clamp(math.floor(coins / eggCost), 1, maxHatch)
-    if batch < 1 then
-        Runtime.Stats.IsHatching = false
-        Runtime.Cache.ActiveHatchEggPos = nil
+    if batch < 1 or not Config.AutoHatch or IsMoveLocked() or (Runtime.Cache.HatchYieldUntil or 0) > os.clock() then
+        stopHatch()
         return
     end
 
-    if not Config.AutoHatch or IsMoveLocked() or (Runtime.Cache.HatchYieldUntil or 0) > os.clock() then
-        Runtime.Stats.IsHatching = false
-        Runtime.Cache.ActiveHatchEggPos = nil
-        return
-    end
-
+    local fixedStandPos = (eggName == "Golden Ridge Egg") and Runtime.Helpers.GetGoldenRidgeStandPos(plot, eggPos) or nil
     Runtime.Cache.ActiveHatchEggPos = eggPos
+    Runtime.Cache.ActiveHatchStandPos = fixedStandPos
     Runtime.Stats.IsHatching = true
     Runtime.Stats.Phase = (isEarly and "Early Hatch " or "Hatching ") .. eggName
     SuppressEggAnimation()
@@ -5844,30 +5417,40 @@ local function StepHatch(plot, buttons, tycoonComplete)
     Runtime.Cache.HatchInFlight = true
     local moveMaxDist = tonumber(Config.HatchMoveMaxDist) or 30
     local _, hrp = GetCharacter()
-    if hrp and (HorizontalDist(hrp.Position, eggPos) > moveMaxDist or math.abs(hrp.Position.Y - eggPos.Y) > 18) then
-        local dest = ComputeEggOverlapPos(eggPos, moveMaxDist)
+    local needHatchMove = false
+    if hrp then
+        if fixedStandPos then
+            needHatchMove = HorizontalDist(hrp.Position, fixedStandPos) > 5
+                or math.abs(hrp.Position.Y - fixedStandPos.Y) > 8
+        else
+            needHatchMove = HorizontalDist(hrp.Position, eggPos) > moveMaxDist
+                or math.abs(hrp.Position.Y - eggPos.Y) > 18
+        end
+    end
+    if hrp and needHatchMove then
         pcall(function()
             hrp.AssemblyLinearVelocity = Vector3.zero
         end)
-        MoveNear(dest, 4)
+        if fixedStandPos then
+            hrp.CFrame = CFrame.new(fixedStandPos)
+            Runtime.Cache.LastTeleportAt = os.clock()
+        else
+            MoveNear(ComputeEggOverlapPos(eggPos, moveMaxDist), 4)
+        end
         local waitUntil = os.clock() + 1.10
         task.wait(0.15) -- Allow physics position replication before CustomEggs_Hatch range check
         local eggObj = Modules.CustomEggsCmds and Modules.CustomEggsCmds.Get and Modules.CustomEggsCmds.Get(eggUid)
         while IsRunning() and eggObj and eggObj._hatchable ~= true and os.clock() < waitUntil do
             task.wait(0.04)
         end
-        if not IsRunning() or not Config.AutoHatch or Runtime.Stats.FightingTurkeyBoss or IsMoveLocked() or (Runtime.Cache.HatchYieldUntil or 0) > os.clock() then
-            Runtime.Cache.HatchInFlight = false
-            Runtime.Stats.IsHatching = false
-            Runtime.Cache.ActiveHatchEggPos = nil
+        if not IsRunning() or not Config.AutoHatch or Runtime.Stats.FightingTurkeyBoss or Runtime.Cache.WildRerollActive or IsMoveLocked() or (Runtime.Cache.HatchYieldUntil or 0) > os.clock() then
+            stopHatch()
             return
         end
         coins = GetCurrency((PT and PT.COIN) or "PumpkinTycoonCoins")
         batch = math.clamp(math.floor(coins / eggCost), 1, maxHatch)
         if coins < eggCost or batch < 1 then
-            Runtime.Cache.HatchInFlight = false
-            Runtime.Stats.IsHatching = false
-            Runtime.Cache.ActiveHatchEggPos = nil
+            stopHatch()
             return
         end
     end
@@ -5915,14 +5498,13 @@ local function StepHatch(plot, buttons, tycoonComplete)
             end
         end
     elseif ok and res == false and errMsg == "Failed to commit!" then
-        Runtime.Stats.IsHatching = false
-        Runtime.Cache.ActiveHatchEggPos = nil
+        stopHatch()
         table.clear(Runtime.Cache.TargetEggCache)
         task.wait(0.35)
     elseif not ok or res == false then
         Runtime.Stats.IsHatching = false
         if type(errMsg) == "string" and string.find(errMsg, "far away", 1, true) then
-            Runtime.Cache.ActiveHatchEggPos = nil
+            stopHatch()
             table.clear(Runtime.Cache.TargetEggCache)
         end
         Log("DEBUG", "Hatch failed [%s x%d]: %s", tostring(eggName), batch, tostring(errMsg or res))
@@ -5957,106 +5539,40 @@ local CRAFT_SPECS = {
     },
 }
 
-local function SafeMethodBool(obj, methodName)
-    if not obj or type(obj[methodName]) ~= "function" then
-        return nil
-    end
+local Craft = {}
+
+function Craft.SafeMethodBool(obj, methodName)
+    if not obj or type(obj[methodName]) ~= "function" then return nil end
     local ok, res = pcall(obj[methodName], obj)
-    if ok then
-        return res == true
-    end
-    return nil
+    return ok and (res == true) or nil
 end
 
-local function HasAncestorNamed(inst, targetName)
-    local cur = inst
-    while cur do
-        if cur.Name == targetName then
-            return true
-        end
-        cur = cur.Parent
-    end
-    return false
-end
-
-local function AddEggPetsToSet(set, eggName)
-    local eggsDir = Modules.Directory and Modules.Directory.Eggs
-    if type(eggsDir) ~= "table" or type(eggName) ~= "string" or eggName == "" then
-        return 0
-    end
-    local eggDir = SafeDirLookup(eggsDir, eggName)
-    if type(eggDir) ~= "table" or type(eggDir.pets) ~= "table" then
-        return 0
-    end
-    local added = 0
-    for _, entry in ipairs(eggDir.pets) do
-        local petId = type(entry) == "table" and entry[1] or entry
-        if type(petId) == "string" and petId ~= "" and not set[petId] then
-            set[petId] = true
-            added = added + 1
-        end
-    end
-    return added
-end
-
---- Build and lazily cache the PumpkinTycoon event pet ID whitelist from Directory.Eggs, Buttons, and Zones.
-local function GetEventCraftPetSet()
+--- Build and lazily cache the PumpkinTycoon event pet ID whitelist from PumpkinTycoonDamage.EventPets + Zones.
+function Craft.GetEventPetSet()
     if type(Runtime.Cache.CraftEventPetSet) == "table" and next(Runtime.Cache.CraftEventPetSet) ~= nil then
         return Runtime.Cache.CraftEventPetSet
     end
 
     local set = {}
-    local eggsDir = Modules.Directory and Modules.Directory.Eggs
-    if type(eggsDir) == "table" then
-        pcall(function()
-            for _, eggDir in pairs(eggsDir) do
-                if type(eggDir) == "table" and type(eggDir.pets) == "table" then
-                    local scriptRef = rawget(eggDir, "_script") or eggDir._script
-                    if scriptRef and HasAncestorNamed(scriptRef, INSTANCE_ID) then
-                        for _, entry in ipairs(eggDir.pets) do
-                            local petId = type(entry) == "table" and entry[1] or entry
-                            if type(petId) == "string" and petId ~= "" then
-                                set[petId] = true
-                            end
-                        end
-                    end
+    local ptd = Modules.PumpkinDamageUtil
+    if ptd and type(ptd.EventPets) == "function" then
+        local ok, evMap = pcall(ptd.EventPets, true)
+        if ok and type(evMap) == "table" then
+            for petId in pairs(evMap) do
+                if type(petId) == "string" and petId ~= "" then set[petId] = true end
+            end
+        end
+    end
+
+    if next(set) == nil and PT and type(PT.ZONES) == "table" then
+        local eggsDir = Modules.Directory and Modules.Directory.Eggs
+        for _, zone in ipairs(PT.ZONES) do
+            local eggDir = type(zone) == "table" and SafeDirLookup(eggsDir, zone.Egg)
+            if type(eggDir) == "table" and type(eggDir.pets) == "table" then
+                for _, entry in ipairs(eggDir.pets) do
+                    local petId = type(entry) == "table" and entry[1] or entry
+                    if type(petId) == "string" and petId ~= "" then set[petId] = true end
                 end
-            end
-        end)
-    end
-
-    local buttonsList = Modules.ButtonsTypes and Modules.ButtonsTypes.BUTTONS
-    if type(buttonsList) == "table" then
-        for _, btn in ipairs(buttonsList) do
-            if type(btn) == "table" and type(btn.Egg) == "string" then
-                AddEggPetsToSet(set, btn.Egg)
-            end
-        end
-    end
-
-    local zones = (Modules.PumpkinTycoon and Modules.PumpkinTycoon.ZONES) or (PT and PT.ZONES)
-    if type(zones) == "table" then
-        for _, zone in ipairs(zones) do
-            if type(zone) == "table" and type(zone.Egg) == "string" then
-                AddEggPetsToSet(set, zone.Egg)
-            end
-        end
-    end
-
-    local roster = (Modules.PumpkinTycoon and Modules.PumpkinTycoon.ROSTER) or (PT and PT.ROSTER)
-    if type(roster) == "table" then
-        for _, r in ipairs(roster) do
-            local petId = type(r) == "table" and r.Pet or nil
-            if type(petId) == "string" and petId ~= "" then
-                set[petId] = true
-            end
-        end
-    end
-    local rosterP2 = (Modules.PumpkinTycoon and Modules.PumpkinTycoon.ROSTER_RUNG_P2) or (PT and PT.ROSTER_RUNG_P2)
-    if type(rosterP2) == "table" then
-        for petId in pairs(rosterP2) do
-            if type(petId) == "string" and petId ~= "" then
-                set[petId] = true
             end
         end
     end
@@ -6068,7 +5584,7 @@ local function GetEventCraftPetSet()
 end
 
 --- Compute required pets per single craft after Mastery GoldReduction / RainbowReduction perks.
-local function GetCraftCost(spec)
+function Craft.GetCost(spec)
     local cost = 10
     local mastery = Modules.MasteryCmds
     if mastery and type(mastery.HasPerk) == "function" and type(mastery.GetPerkPower) == "function" then
@@ -6083,43 +5599,28 @@ local function GetCraftCost(spec)
     return cost
 end
 
-local function IsCraftMachineUnlocked(spec, plot, buttons)
-    return Runtime.Helpers.HasCraftMachineUnlocked(spec.machineName, plot, buttons)
-end
-
-local function CollectDaycareUIDs(cmdModule, daycareUids)
-    if not cmdModule or type(cmdModule.GetActive) ~= "function" then
-        return
-    end
+function Craft.CollectDaycareUIDs(cmdModule, daycareUids)
+    if not cmdModule or type(cmdModule.GetActive) ~= "function" then return end
     local ok, active = pcall(cmdModule.GetActive)
-    if not ok or type(active) ~= "table" then
-        return
-    end
+    if not ok or type(active) ~= "table" then return end
     for slotKey, entry in pairs(active) do
-        if type(slotKey) == "string" and slotKey ~= "" then
-            daycareUids[slotKey] = true
-        end
+        if type(slotKey) == "string" and slotKey ~= "" then daycareUids[slotKey] = true end
         if type(entry) == "table" then
-            if type(entry.uid) == "string" and entry.uid ~= "" then
-                daycareUids[entry.uid] = true
-            end
-            if type(entry._uid) == "string" and entry._uid ~= "" then
-                daycareUids[entry._uid] = true
-            end
+            local u1, u2 = entry.uid, entry._uid
+            if type(u1) == "string" and u1 ~= "" then daycareUids[u1] = true end
+            if type(u2) == "string" and u2 ~= "" then daycareUids[u2] = true end
             if type(entry.Pet) == "table" then
                 local petUid = entry.Pet.uid or entry.Pet._uid or entry.Pet._id or entry.Pet.UID
-                if type(petUid) == "string" and petUid ~= "" then
-                    daycareUids[petUid] = true
-                end
+                if type(petUid) == "string" and petUid ~= "" then daycareUids[petUid] = true end
             end
         end
     end
 end
 
-local function GetProtectedCraftingSets()
+function Craft.GetProtectedSets()
     local daycareUids = {}
-    CollectDaycareUIDs(Modules.DaycareCmds, daycareUids)
-    CollectDaycareUIDs(Modules.ExclusiveDaycareCmds, daycareUids)
+    Craft.CollectDaycareUIDs(Modules.DaycareCmds, daycareUids)
+    Craft.CollectDaycareUIDs(Modules.ExclusiveDaycareCmds, daycareUids)
 
     local equippedCounts = {}
     if Config.CraftProtectEquipped ~= false and Modules.PetCmds and type(Modules.PetCmds.GetEquipped) == "function" then
@@ -6134,182 +5635,92 @@ local function GetProtectedCraftingSets()
         end
     end
 
-    local maxEquip = 4
-    if Modules.PetCmds and type(Modules.PetCmds.GetMaxEquipped) == "function" then
-        local okMax, m = pcall(Modules.PetCmds.GetMaxEquipped)
-        if okMax and type(m) == "number" and m >= 1 then
-            maxEquip = math.floor(m)
-        end
-    end
-
     return {
         daycare = daycareUids,
         equippedCounts = equippedCounts,
-        maxEquip = maxEquip,
+        maxEquip = Runtime.Helpers.GetMaxEquippedPets(),
     }
 end
 
-local function FetchPetInventory()
-    if not Modules.Save or type(Modules.Save.Get) ~= "function" then
-        return nil
-    end
-    local okSave, saveData = pcall(Modules.Save.Get)
-    local invPets = okSave and type(saveData) == "table" and saveData.Inventory and saveData.Inventory.Pet
-    return type(invPets) == "table" and invPets or nil
-end
-
-local function CollectInventoryCraftState(invPets)
+function Craft.CollectInventoryState(invPets)
     local totalOwnedPets = 0
     for _, data in pairs(invPets) do
         if type(data) == "table" and type(data.id) == "string" then
             totalOwnedPets = totalOwnedPets + math.max(1, math.floor(tonumber(data._am) or 1))
         end
     end
-    return totalOwnedPets, GetProtectedCraftingSets()
+    return totalOwnedPets, Craft.GetProtectedSets()
 end
 
-local function IsPetStackEligibleForCraft(uid, data, spec, protected, eventPetSet, petsDir, cost)
-    if type(data) ~= "table" or type(data.id) ~= "string" then
-        return false
-    end
-    if Config.CraftEventPetsOnly ~= false and (not eventPetSet or not eventPetSet[data.id]) then
-        return false
-    end
-    if protected.daycare[uid] then
-        return false
-    end
+function Craft.IsStackEligible(uid, data, spec, protected, eventPetSet, petsDir, cost)
+    if type(data) ~= "table" or type(data.id) ~= "string" then return false end
+    if Config.CraftEventPetsOnly ~= false and (not eventPetSet or not eventPetSet[data.id]) then return false end
+    if protected.daycare[uid] then return false end
 
-    -- Pre-filter cheap raw Save fields and available amount before PetItem:Get(uid) / Directory lookup
     if spec.requireNormal then
-        if data.pt ~= nil and data.pt ~= 0 then
-            return false
-        end
+        if data.pt ~= nil and data.pt ~= 0 then return false end
     elseif spec.requireGolden then
-        if data.pt ~= 1 then
-            return false
-        end
+        if data.pt ~= 1 then return false end
     else
         return false
     end
 
-    if Config.CraftProtectLocked ~= false then
-        if (data._lk == true) or (data.l == true) or (data.lock == true) then
-            return false
-        end
-    end
+    if Config.CraftProtectLocked ~= false and (data._lk == true or data.l == true or data.lock == true) then return false end
+    if Config.CraftProtectShiny ~= false and data.sh == true then return false end
 
-    if Config.CraftProtectShiny ~= false and data.sh == true then
-        return false
-    end
-
-    local rawAmount = math.max(1, math.floor(tonumber(data._am) or 1))
-    local available = rawAmount - (protected.equippedCounts[uid] or 0)
-    if available < (cost or 1) then
-        return false
-    end
+    local available = math.max(1, math.floor(tonumber(data._am) or 1)) - (protected.equippedCounts[uid] or 0)
+    if available < (cost or 1) then return false end
 
     local pd = SafeDirLookup(petsDir, data.id)
+    if Runtime.Helpers.GetChaseCategory(data.id, pd) ~= nil then return false end
     if pd then
-        if pd.huge == true or pd.titanic == true or pd.gargantuan == true
-            or (type(pd.exclusiveLevel) == "number" and pd.exclusiveLevel > 0)
-        then
-            return false
-        end
-        if spec.requireNormal and (pd.preventGolden == true or pd.preventGoldMachine == true) then
-            return false
-        end
-        if spec.requireGolden and (pd.preventRainbow == true or pd.preventRainbowMachine == true) then
-            return false
-        end
-    elseif string.sub(data.id, 1, 5) == "Huge "
-        or string.sub(data.id, 1, 8) == "Titanic "
-        or string.sub(data.id, 1, 11) == "Gargantuan "
-    then
-        return false
+        if type(pd.exclusiveLevel) == "number" and pd.exclusiveLevel > 0 then return false end
+        if spec.requireNormal and (pd.preventGolden == true or pd.preventGoldMachine == true) then return false end
+        if spec.requireGolden and (pd.preventRainbow == true or pd.preventRainbowMachine == true) then return false end
     end
 
     local inst = ResolvePetItem(uid)
     if inst then
-        if spec.requireNormal and SafeMethodBool(inst, "IsNormal") == false then
-            return false
-        elseif spec.requireGolden and SafeMethodBool(inst, "IsGolden") == false then
-            return false
-        end
-        if Config.CraftProtectLocked ~= false and SafeMethodBool(inst, "IsLocked") == true then
-            return false
-        end
-        if Config.CraftProtectShiny ~= false and SafeMethodBool(inst, "IsShiny") == true then
-            return false
-        end
-        if SafeMethodBool(inst, spec.canCraftFnName) == false then
-            return false
-        end
-        if SafeMethodBool(inst, "IsHuge") == true
-            or SafeMethodBool(inst, "IsTitanic") == true
-            or SafeMethodBool(inst, "IsGargantuan") == true
-        then
+        if spec.requireNormal and Craft.SafeMethodBool(inst, "IsNormal") == false then return false end
+        if spec.requireGolden and Craft.SafeMethodBool(inst, "IsGolden") == false then return false end
+        if Config.CraftProtectLocked ~= false and Craft.SafeMethodBool(inst, "IsLocked") == true then return false end
+        if Config.CraftProtectShiny ~= false and Craft.SafeMethodBool(inst, "IsShiny") == true then return false end
+        if Craft.SafeMethodBool(inst, spec.canCraftFnName) == false then return false end
+        if Craft.SafeMethodBool(inst, "IsHuge") == true or Craft.SafeMethodBool(inst, "IsTitanic") == true or Craft.SafeMethodBool(inst, "IsGargantuan") == true then
             return false
         end
         if type(inst.GetExclusiveLevel) == "function" then
             local okEx, exLvl = pcall(inst.GetExclusiveLevel, inst)
-            if okEx and type(exLvl) == "number" and exLvl > 0 then
-                return false
-            end
+            if okEx and type(exLvl) == "number" and exLvl > 0 then return false end
         end
     end
 
     return true, inst, pd, available
 end
 
-local function EstimateCandidateCraftPower(data, inst, pd, spec)
-    local evDmg = select(1, Runtime.Helpers.GetPetEventDamage(data, inst, pd))
-    if type(evDmg) == "number" and evDmg > 0 then
-        return evDmg
-    end
-    if inst and type(inst.CalculatePower) == "function" then
-        local okP, val = pcall(inst.CalculatePower, inst)
-        if okP and type(val) == "number" and val > 0 then
-            return val
-        end
-    end
-    if pd then
-        local mult = spec.requireGolden and 3 or 1
-        return ((type(pd.cachedPower) == "table" and tonumber(pd.cachedPower[1])) or tonumber(pd.power) or 0) * mult
-    end
-    return 0
-end
-
 --- Build deterministic craft batches for one machine spec (strongest pets first) while honoring team protections.
-local function BuildCraftPlans(spec, cost, invPets, protected, eventPetSet, totalOwnedPets, minBatchOverride)
+function Craft.BuildPlans(spec, cost, invPets, protected, eventPetSet, totalOwnedPets, minBatchOverride)
     local plans = {}
-    if type(invPets) ~= "table" or cost < 1 then
-        return plans
-    end
+    if type(invPets) ~= "table" or cost < 1 then return plans end
 
     local petsDir = Modules.Directory and Modules.Directory.Pets
     local candidates = {}
     for uid, data in pairs(invPets) do
-        local eligible, inst, pd, available = IsPetStackEligibleForCraft(uid, data, spec, protected, eventPetSet, petsDir, cost)
+        local eligible, inst, pd, available = Craft.IsStackEligible(uid, data, spec, protected, eventPetSet, petsDir, cost)
         if eligible then
             table.insert(candidates, {
                 uid = uid,
                 petId = data.id,
                 available = available,
-                power = EstimateCandidateCraftPower(data, inst, pd, spec),
+                power = select(1, Runtime.Helpers.GetPetEventDamage(data, inst, pd)) or 0,
             })
         end
     end
 
     table.sort(candidates, function(a, b)
-        if a.power ~= b.power then
-            return a.power > b.power
-        end
-        if a.available ~= b.available then
-            return a.available > b.available
-        end
-        if a.petId ~= b.petId then
-            return a.petId < b.petId
-        end
+        if a.power ~= b.power then return a.power > b.power end
+        if a.available ~= b.available then return a.available > b.available end
+        if a.petId ~= b.petId then return a.petId < b.petId end
         return tostring(a.uid) < tostring(b.uid)
     end)
 
@@ -6320,8 +5731,7 @@ local function BuildCraftPlans(spec, cost, invPets, protected, eventPetSet, tota
     for _, cand in ipairs(candidates) do
         local crafts = math.floor(cand.available / cost)
         if reserveTeam and cost > 1 then
-            local maxBySlots = math.floor(spareSlots / (cost - 1))
-            crafts = math.min(crafts, maxBySlots)
+            crafts = math.min(crafts, math.floor(spareSlots / (cost - 1)))
         end
         if crafts >= minBatch then
             if reserveTeam and cost > 1 then
@@ -6339,11 +5749,9 @@ local function BuildCraftPlans(spec, cost, invPets, protected, eventPetSet, tota
     return plans
 end
 
-local function ExecuteCraftPlans(plot, spec, plans, cost)
-    local totalCrafted = 0
-    local totalShiny = 0
-    local padVisited = false
-    local hadFailure = false
+function Craft.ExecutePlans(plot, spec, plans, cost)
+    local totalCrafted, totalShiny = 0, 0
+    local padVisited, hadFailure = false, false
     local consumedByUid = {}
 
     local padOk = WithMachinePad(plot, spec.machineName, 80, function()
@@ -6373,9 +5781,7 @@ local function ExecuteCraftPlans(plot, spec, plans, cost)
                         tostring(plan.petId),
                         shinyMade > 0 and string.format(" (%dx Shiny)", shinyMade) or ""
                     )
-                    if remaining > 0 then
-                        task.wait(0.08)
-                    end
+                    if remaining > 0 then task.wait(0.08) end
                 else
                     hadFailure = true
                     Runtime.Cache.CraftFailUntil[spec.kind] = os.clock() + (tonumber(Config.CraftFailCooldownSec) or 10)
@@ -6384,9 +5790,7 @@ local function ExecuteCraftPlans(plot, spec, plans, cost)
                     break
                 end
             end
-            if hadFailure or not IsRunning() then
-                break
-            end
+            if hadFailure or not IsRunning() then break end
         end
 
         CloseMachineTab(spec.machineName)
@@ -6401,11 +5805,9 @@ local function ExecuteCraftPlans(plot, spec, plans, cost)
     return totalCrafted, totalShiny, hadFailure, consumedByUid
 end
 
-local function CountGoldPets(invPets)
+function Craft.CountGoldPets(invPets)
     local total = 0
-    if type(invPets) ~= "table" then
-        return 0
-    end
+    if type(invPets) ~= "table" then return 0 end
     for _, entry in pairs(invPets) do
         if type(entry) == "table" and entry.pt == 1 then
             total = total + math.max(1, math.floor(tonumber(entry._am) or 1))
@@ -6415,13 +5817,11 @@ local function CountGoldPets(invPets)
 end
 
 --- Poll Save.Inventory.Pet briefly after Gold crafting until source deductions & crafted output replicate.
-local function WaitForCraftReplication(prevGoldCount, beforeAmounts, consumedByUid, crafted, timeoutSec)
+function Craft.WaitForReplication(prevGoldCount, beforeAmounts, consumedByUid, crafted, timeoutSec)
     if crafted <= 0 then
-        local curInv = FetchPetInventory()
-        if not curInv then
-            return nil
-        end
-        local curTotal, curProtected = CollectInventoryCraftState(curInv)
+        local curInv = Runtime.Helpers.GetSaveInventory("Pet")
+        if not curInv then return nil end
+        local curTotal, curProtected = Craft.CollectInventoryState(curInv)
         return curInv, curTotal, curProtected
     end
 
@@ -6430,46 +5830,39 @@ local function WaitForCraftReplication(prevGoldCount, beforeAmounts, consumedByU
 
     while IsRunning() do
         ExtendMachineSession(4.0)
-        local curInv = FetchPetInventory()
+        local curInv = Runtime.Helpers.GetSaveInventory("Pet")
         if curInv then
             local allDeducted = true
             for uid, consumed in pairs(consumedByUid) do
                 if consumed > 0 then
-                    local prevAm = beforeAmounts[uid] or 0
                     local curEntry = curInv[uid]
                     local curAm = (type(curEntry) == "table") and math.max(1, math.floor(tonumber(curEntry._am) or 1)) or 0
-                    if curAm > math.max(0, prevAm - consumed) then
+                    if curAm > math.max(0, (beforeAmounts[uid] or 0) - consumed) then
                         allDeducted = false
                         break
                     end
                 end
             end
 
-            if CountGoldPets(curInv) >= (prevGoldCount + crafted) then
-                local curTotal, curProtected = CollectInventoryCraftState(curInv)
+            if Craft.CountGoldPets(curInv) >= (prevGoldCount + crafted) then
+                local curTotal, curProtected = Craft.CollectInventoryState(curInv)
                 return curInv, curTotal, curProtected
             end
             if allDeducted then
-                local curTotal, curProtected = CollectInventoryCraftState(curInv)
                 lastDeductedInv = curInv
-                lastDeductedTotal = curTotal
-                lastDeductedProtected = curProtected
+                lastDeductedTotal, lastDeductedProtected = Craft.CollectInventoryState(curInv)
             end
         end
 
-        if os.clock() >= deadline then
-            break
-        end
+        if os.clock() >= deadline then break end
         task.wait(0.05)
     end
 
-    if lastDeductedInv then
-        return lastDeductedInv, lastDeductedTotal, lastDeductedProtected
-    end
+    if lastDeductedInv then return lastDeductedInv, lastDeductedTotal, lastDeductedProtected end
     return nil
 end
 
-local function RefreshCraftedTeamPower()
+function Craft.RefreshTeamPower()
     Runtime.Cache.TeamPowerSnapshotAt = 0
     GetTeamPowerSnapshot(true)
     EnsureBestPetsEquipped(true)
@@ -6482,35 +5875,25 @@ local function RefreshCraftedTeamPower()
     end)
 end
 
-local function IsSpecReadyToCheck(spec, plot, buttons, now)
-    if not Config[spec.configKey] then
-        return false
-    end
-    if now < ((Runtime.Cache.CraftFailUntil and Runtime.Cache.CraftFailUntil[spec.kind]) or 0) then
-        return false
-    end
-    return IsCraftMachineUnlocked(spec, plot, buttons)
+function Craft.IsSpecReady(spec, plot, buttons, now)
+    if not Config[spec.configKey] then return false end
+    if now < ((Runtime.Cache.CraftFailUntil and Runtime.Cache.CraftFailUntil[spec.kind]) or 0) then return false end
+    return Runtime.Helpers.HasCraftMachineUnlocked(spec.machineName, plot, buttons)
 end
 
 --- Periodically scan inventory for Gold & Rainbow crafts, yielding politely to AutoHatch before chaining trips.
 local function StepCraftPets(plot, buttons)
-    if not plot or not Modules.Network then
-        return
-    end
-    if not Config.AutoMakeGold and not Config.AutoMakeRainbow then
-        return
-    end
+    if not plot or not Modules.Network or Runtime.Cache.WildRerollActive then return end
+    if not Config.AutoMakeGold and not Config.AutoMakeRainbow then return end
 
     local now = os.clock()
     local checkInterval = math.max(0.2, tonumber(Config.CraftCheckIntervalSec) or 1.0)
-    if (now - (Runtime.Cache.LastCraftCheckAt or 0)) < checkInterval then
-        return
-    end
+    if (now - (Runtime.Cache.LastCraftCheckAt or 0)) < checkInterval then return end
     Runtime.Cache.LastCraftCheckAt = now
 
     local anyEnabled = false
     for _, spec in ipairs(CRAFT_SPECS) do
-        if IsSpecReadyToCheck(spec, plot, buttons, now) then
+        if Craft.IsSpecReady(spec, plot, buttons, now) then
             anyEnabled = true
             break
         end
@@ -6522,17 +5905,13 @@ local function StepCraftPets(plot, buttons)
 
     local eventPetSet = nil
     if Config.CraftEventPetsOnly ~= false then
-        eventPetSet = GetEventCraftPetSet()
-        if not eventPetSet or next(eventPetSet) == nil then
-            return
-        end
+        eventPetSet = Craft.GetEventPetSet()
+        if not eventPetSet or next(eventPetSet) == nil then return end
     end
 
-    local invPets = FetchPetInventory()
-    if not invPets then
-        return
-    end
-    local totalOwnedPets, protected = CollectInventoryCraftState(invPets)
+    local invPets = Runtime.Helpers.GetSaveInventory("Pet")
+    if not invPets then return end
+    local totalOwnedPets, protected = Craft.CollectInventoryState(invPets)
 
     local isHatchingNow = (Runtime.Stats.IsHatching == true) or (Runtime.Cache.HatchInFlight == true)
     local isPostCompleteAfk = (Runtime.Stats.TycoonComplete == true) and isHatchingNow
@@ -6542,8 +5921,8 @@ local function StepCraftPets(plot, buttons)
 
     local hasPendingWork = false
     for _, spec in ipairs(CRAFT_SPECS) do
-        if IsSpecReadyToCheck(spec, plot, buttons, now) then
-            local plans = BuildCraftPlans(spec, GetCraftCost(spec), invPets, protected, eventPetSet, totalOwnedPets, triggerMinBatch)
+        if Craft.IsSpecReady(spec, plot, buttons, now) then
+            local plans = Craft.BuildPlans(spec, Craft.GetCost(spec), invPets, protected, eventPetSet, totalOwnedPets, triggerMinBatch)
             if #plans > 0 then
                 hasPendingWork = true
                 break
@@ -6565,9 +5944,7 @@ local function StepCraftPets(plot, buttons)
             or math.max(0, tonumber(Config.CraftEarlyHatchYieldIntervalSec) or 8.0)
         local waitSinceReady = now - (Runtime.Cache.PendingCraftReadySince or now)
         local waitSinceTrip = now - (Runtime.Cache.LastCraftTripAt or 0)
-        if waitSinceReady < yieldSec or waitSinceTrip < yieldSec then
-            return
-        end
+        if waitSinceReady < yieldSec or waitSinceTrip < yieldSec then return end
     end
 
     Runtime.Cache.PendingCraftReadySince = 0
@@ -6576,31 +5953,26 @@ local function StepCraftPets(plot, buttons)
     local totalCraftedAny = 0
     WithMachineSession(function()
         -- Re-read inventory after BeginMachineSession yields so in-flight hatches/equips settle before planning.
-        invPets = FetchPetInventory()
-        if not invPets then
-            return
-        end
-        totalOwnedPets, protected = CollectInventoryCraftState(invPets)
+        invPets = Runtime.Helpers.GetSaveInventory("Pet")
+        if not invPets then return end
+        totalOwnedPets, protected = Craft.CollectInventoryState(invPets)
 
         local prevCrafted = 0
-        local prevGoldCount = CountGoldPets(invPets)
+        local prevGoldCount = Craft.CountGoldPets(invPets)
         local prevBeforeAmounts = nil
         local prevConsumedByUid = nil
 
         for idx, spec in ipairs(CRAFT_SPECS) do
-            if not IsRunning() then
-                break
-            end
+            if not IsRunning() then break end
 
-            local stepNow = os.clock()
-            if IsSpecReadyToCheck(spec, plot, buttons, stepNow) then
-                local cost = GetCraftCost(spec)
+            if Craft.IsSpecReady(spec, plot, buttons, os.clock()) then
+                local cost = Craft.GetCost(spec)
                 if idx > 1 and prevCrafted > 0 then
                     if (prevGoldCount + prevCrafted) < cost then
                         prevCrafted = 0
                         break
                     end
-                    local updatedInv, newTotal, newProtected = WaitForCraftReplication(
+                    local updatedInv, newTotal, newProtected = Craft.WaitForReplication(
                         prevGoldCount,
                         prevBeforeAmounts,
                         prevConsumedByUid,
@@ -6617,7 +5989,7 @@ local function StepCraftPets(plot, buttons)
                     protected = newProtected
                 end
 
-                local plans = BuildCraftPlans(spec, cost, invPets, protected, eventPetSet, totalOwnedPets)
+                local plans = Craft.BuildPlans(spec, cost, invPets, protected, eventPetSet, totalOwnedPets)
                 if #plans > 0 then
                     local beforeAmounts = {}
                     for _, plan in ipairs(plans) do
@@ -6627,8 +5999,8 @@ local function StepCraftPets(plot, buttons)
                             or 0
                     end
 
-                    prevGoldCount = CountGoldPets(invPets)
-                    local crafted, _, _, consumedByUid = ExecuteCraftPlans(plot, spec, plans, cost)
+                    prevGoldCount = Craft.CountGoldPets(invPets)
+                    local crafted, _, _, consumedByUid = Craft.ExecutePlans(plot, spec, plans, cost)
                     totalCraftedAny = totalCraftedAny + crafted
                     prevCrafted = crafted
                     prevBeforeAmounts = beforeAmounts
@@ -6641,7 +6013,7 @@ local function StepCraftPets(plot, buttons)
     end)
 
     if totalCraftedAny > 0 then
-        RefreshCraftedTeamPower()
+        Craft.RefreshTeamPower()
     end
 end
 
@@ -6649,35 +6021,21 @@ end
 -- 12. OPTIONAL EVENT PASS CLAIM LOOP
 -- ============================================================================
 local function StepEventPass()
-    if not Config.AutoEventPass or not Modules.Network or not Modules.EventPassUtil or not Modules.EventPassTypes then
-        return
-    end
+    if not Config.AutoEventPass or not Modules.Network or not Modules.EventPassUtil or not Modules.EventPassTypes then return end
     local now = os.clock()
-    if now - (Runtime.Cache.LastPassCheckAt or 0) < 15 then
-        return
-    end
+    if now - (Runtime.Cache.LastPassCheckAt or 0) < 15 then return end
     Runtime.Cache.LastPassCheckAt = now
 
     local passId = Modules.EventPassUtil.Current and Modules.EventPassUtil.Current() or ""
-    if passId == "" then
-        return
-    end
+    if passId == "" then return end
     local ok, state = pcall(Modules.Network.Invoke, Modules.EventPassTypes.NET.Get, passId)
-    if not ok or type(state) ~= "table" then
-        return
-    end
+    if not ok or type(state) ~= "table" then return end
     local passCfg = Modules.EventPassUtil.Get and Modules.EventPassUtil.Get(passId)
-    if not passCfg or not Modules.EventPassUtil.WeekSet then
-        return
-    end
+    if not passCfg or not Modules.EventPassUtil.WeekSet then return end
     local weekSet = Modules.EventPassUtil.WeekSet(passCfg, state.Week or 1)
-    if not weekSet or type(weekSet.Tiers) ~= "table" then
-        return
-    end
+    if not weekSet or type(weekSet.Tiers) ~= "table" then return end
 
-    if state.Buying == false then
-        return
-    end
+    if state.Buying == false then return end
     local stars = tonumber(state.Stars) or 0
     local spent = tonumber(state.Spent) or 0
     local owned = type(state.Owned) == "table" and state.Owned or {}
@@ -6707,25 +6065,15 @@ end
 -- 12A. PART 2 PET NET STORE, WILD HUNT & SIGHTING CATCH
 -- ============================================================================
 function Runtime.Helpers.GetNetCount(netId)
-    if type(netId) ~= "string" or netId == "" then
-        return 0
-    end
+    if type(netId) ~= "string" or netId == "" then return 0 end
     if Modules.MiscItem then
         local ok, cnt = pcall(function()
             return Modules.MiscItem(netId):CountExact()
         end)
-        if ok and type(cnt) == "number" then
-            return math.max(0, math.floor(cnt))
-        end
+        if ok and type(cnt) == "number" then return math.max(0, math.floor(cnt)) end
     end
-    local okSave, saveData = false, nil
-    if Modules.Save and Modules.Save.Get then
-        okSave, saveData = pcall(Modules.Save.Get)
-    end
-    local invMisc = okSave and type(saveData) == "table" and saveData.Inventory and saveData.Inventory.Misc
-    if type(invMisc) ~= "table" then
-        return 0
-    end
+    local invMisc = Runtime.Helpers.GetSaveInventory("Misc")
+    if not invMisc then return 0 end
     local total = 0
     for _, item in pairs(invMisc) do
         if type(item) == "table" and item.id == netId then
@@ -6745,37 +6093,23 @@ function Runtime.Helpers.PickHuntNet(isHugeOrSighting)
 
     if isHugeOrSighting then
         if ultraOnHuge then
-            if ultraCnt > 0 then
-                return netUltra, normalCnt, ultraCnt
-            end
-            if Config.HuntUseNormalNetOnHuge ~= false and normalCnt > 0 then
-                return netNormal, normalCnt, ultraCnt
-            end
+            if ultraCnt > 0 then return netUltra, normalCnt, ultraCnt end
+            if Config.HuntUseNormalNetOnHuge ~= false and normalCnt > 0 then return netNormal, normalCnt, ultraCnt end
             return nil, normalCnt, ultraCnt
         else
-            if normalCnt > 0 then
-                return netNormal, normalCnt, ultraCnt
-            end
-            if ultraCnt > 0 then
-                return netUltra, normalCnt, ultraCnt
-            end
+            if normalCnt > 0 then return netNormal, normalCnt, ultraCnt end
+            if ultraCnt > 0 then return netUltra, normalCnt, ultraCnt end
             return nil, normalCnt, ultraCnt
         end
     end
 
-    if normalCnt > 0 then
-        return netNormal, normalCnt, ultraCnt
-    end
-    if not ultraOnHuge and ultraCnt > 0 then
-        return netUltra, normalCnt, ultraCnt
-    end
+    if normalCnt > 0 then return netNormal, normalCnt, ultraCnt end
+    if not ultraOnHuge and ultraCnt > 0 then return netUltra, normalCnt, ultraCnt end
     return nil, normalCnt, ultraCnt
 end
 
 function Runtime.Helpers.GetWildSpeciesInfo(zone, petId)
-    if type(petId) ~= "string" then
-        return { huge = false, tier = 0 }
-    end
+    if type(petId) ~= "string" then return { huge = false, tier = 0 } end
     local spMap = Runtime.Cache.WildSpeciesMap
     if spMap == nil then
         spMap = {}
@@ -6801,44 +6135,29 @@ function Runtime.Helpers.GetWildSpeciesInfo(zone, petId)
     end
 
     local zEntry = type(zone) == "number" and spMap[zone] and spMap[zone][petId] or nil
-    if zEntry then
-        return zEntry
-    end
+    if zEntry then return zEntry end
     for _, zMap in pairs(spMap) do
-        if zMap[petId] then
-            return zMap[petId]
-        end
+        if zMap[petId] then return zMap[petId] end
     end
 
     local petsDir = Modules.Directory and Modules.Directory.Pets
     local pd = type(petsDir) == "table" and rawget(petsDir, petId) or nil
-    local isHuge = (pd and (pd.huge == true or pd.titanic == true or pd.gargantuan == true))
-        or string.sub(petId, 1, 5) == "Huge "
-        or string.sub(petId, 1, 8) == "Titanic "
-        or string.sub(petId, 1, 11) == "Gargantuan "
+    local isHuge = Runtime.Helpers.GetChaseCategory(petId, pd) ~= nil
     return {
-        huge = isHuge == true,
+        huge = isHuge,
         tier = isHuge and 4 or 0,
     }
 end
 
 function Runtime.Helpers.EnsureSightingHook()
-    if Runtime.Cache.SightingHookBound then
-        return
-    end
-    if not Modules.Network or type(Modules.Network.Fired) ~= "function" then
-        return
-    end
+    if Runtime.Cache.SightingHookBound then return end
+    if not Modules.Network or type(Modules.Network.Fired) ~= "function" then return end
     local remoteName = (Modules.PumpkinSightingUtil and Modules.PumpkinSightingUtil.REMOTE) or "PumpkinTycoon: PV_Seen"
     local ok, sig = pcall(Modules.Network.Fired, remoteName)
-    if not ok or not sig then
-        return
-    end
+    if not ok or not sig then return end
     Runtime.Cache.SightingHookBound = true
     BindConn(sig, function(payload)
-        if not IsRunning() or type(payload) ~= "table" or type(payload.id) ~= "string" then
-            return
-        end
+        if not IsRunning() or type(payload) ~= "table" or type(payload.id) ~= "string" then return end
         if payload.closed == true then
             local cur = Runtime.Cache.ActiveSighting
             if cur and cur.id == payload.id then
@@ -6906,34 +6225,22 @@ function Runtime.Helpers.GetNetStoreShelf(plot, forceFetch)
 end
 
 function Runtime.Helpers.StepNetStore(plot, buttons, tycoonComplete)
-    if Config.AutoBuyNetStore == false or not plot then
-        return
-    end
-    if not Runtime.Helpers.IsPlotPart2Active(plot) then
-        return
-    end
+    if Config.AutoBuyNetStore == false or not plot then return end
+    if not Runtime.Helpers.IsPlotPart2Active(plot) then return end
     local storeUtil = Modules.PumpkinStoreUtil
     if storeUtil and type(storeUtil.Enabled) == "function" then
         local okE, enabled = pcall(storeUtil.Enabled)
-        if okE and not enabled then
-            return
-        end
+        if okE and not enabled then return end
     end
     local storeBtn = (storeUtil and storeUtil.BUTTON) or "PetNetStore"
-    if not Modules.PumpkinButtonsUtil or not Modules.PumpkinButtonsUtil.Owned(buttons, storeBtn) then
-        return
-    end
+    if not Modules.PumpkinButtonsUtil or not Modules.PumpkinButtonsUtil.Owned(buttons, storeBtn) then return end
 
     local now = os.clock()
     local interval = math.max(1.5, tonumber(Config.NetStoreCheckIntervalSec) or 4.0)
-    if (now - (Runtime.Cache.LastNetStoreStepAt or 0)) < interval then
-        return
-    end
+    if (now - (Runtime.Cache.LastNetStoreStepAt or 0)) < interval then return end
     Runtime.Cache.LastNetStoreStepAt = now
 
-    if (now - (Runtime.Cache.LastNetStoreFailAt or 0)) < 10.0 then
-        return
-    end
+    if (now - (Runtime.Cache.LastNetStoreFailAt or 0)) < 10.0 then return end
 
     local shelf, storeFeat = Runtime.Helpers.GetNetStoreShelf(plot, false)
 
@@ -6959,9 +6266,7 @@ function Runtime.Helpers.StepNetStore(plot, buttons, tycoonComplete)
         end
     end
 
-    if type(shelf) ~= "table" or shelf.seed == nil or type(shelf.offers) ~= "table" or #shelf.offers == 0 then
-        return
-    end
+    if type(shelf) ~= "table" or shelf.seed == nil or type(shelf.offers) ~= "table" or #shelf.offers == 0 then return end
 
     local ultraId = (storeUtil and storeUtil.ULTRA_NET) or "Ultra Pet Net"
     local normalId = (storeUtil and storeUtil.NET) or "Pet Net"
@@ -6981,19 +6286,13 @@ function Runtime.Helpers.StepNetStore(plot, buttons, tycoonComplete)
             table.insert(offers, o)
         end
     end
-    if #offers == 0 then
-        return
-    end
+    if #offers == 0 then return end
 
     table.sort(offers, function(a, b)
         local aUltra = (a.item == ultraId)
         local bUltra = (b.item == ultraId)
-        if aUltra ~= bUltra then
-            return aUltra
-        end
-        if a.price ~= b.price then
-            return a.price < b.price
-        end
+        if aUltra ~= bUltra then return aUltra end
+        if a.price ~= b.price then return a.price < b.price end
         return a.slot < b.slot
     end)
 
@@ -7006,9 +6305,7 @@ function Runtime.Helpers.StepNetStore(plot, buttons, tycoonComplete)
     local totalPlanned = 0
 
     for _, o in ipairs(offers) do
-        if totalPlanned >= 12 then
-            break
-        end
+        if totalPlanned >= 12 then break end
         local isUltra = (o.item == ultraId)
         local isNormal = (o.item == normalId)
         local allowedItem = (isUltra and Config.NetStoreBuyUltra ~= false)
@@ -7029,9 +6326,7 @@ function Runtime.Helpers.StepNetStore(plot, buttons, tycoonComplete)
                 else
                     canAfford = (simCoins >= (cost + minSpare))
                 end
-                if not canAfford then
-                    break
-                end
+                if not canAfford then break end
                 simCoins = math.max(0, simCoins - cost)
                 stockLeft = stockLeft - 1
                 buyQty = buyQty + 1
@@ -7043,19 +6338,13 @@ function Runtime.Helpers.StepNetStore(plot, buttons, tycoonComplete)
         end
     end
 
-    if #plan == 0 then
-        return
-    end
+    if #plan == 0 then return end
 
     WithMachinePad(plot, merchantId, 20, function()
         for _, req in ipairs(plan) do
-            if not IsRunning() then
-                break
-            end
+            if not IsRunning() then break end
             for _ = 1, req.qty do
-                if not IsRunning() then
-                    break
-                end
+                if not IsRunning() then break end
                 local okBuy, resBuy, errBuy = pcall(Modules.Network.Invoke, "Merchant_RequestPurchase", merchantId, req.offer.slot, false, shelf.seed)
                 if okBuy and resBuy == true then
                     req.offer.left = math.max(0, (tonumber(req.offer.left) or 1) - 1)
@@ -7078,22 +6367,14 @@ function Runtime.Helpers.StepNetStore(plot, buttons, tycoonComplete)
 end
 
 function Runtime.Helpers.StepSightingCatch(plot)
-    if Config.AutoCatchSighting == false or not plot then
-        return false
-    end
+    if Config.AutoCatchSighting == false or not plot then return false end
     local s = Runtime.Cache.ActiveSighting
-    if type(s) ~= "table" or s.thrown == true then
-        return false
-    end
-    if not Runtime.Helpers.IsPlotPart2Active(plot) then
-        return false
-    end
+    if type(s) ~= "table" or s.thrown == true then return false end
+    if not Runtime.Helpers.IsPlotPart2Active(plot) then return false end
     local sightUtil = Modules.PumpkinSightingUtil
     if sightUtil and type(sightUtil.Enabled) == "function" then
         local okE, enabled = pcall(sightUtil.Enabled)
-        if okE and not enabled then
-            return false
-        end
+        if okE and not enabled then return false end
     end
 
     local nowServer = workspace:GetServerTimeNow()
@@ -7113,14 +6394,10 @@ function Runtime.Helpers.StepSightingCatch(plot)
     end
 
     local throwCd = (Modules.PumpkinWildUtil and Modules.PumpkinWildUtil.ThrowSeconds and Modules.PumpkinWildUtil.ThrowSeconds()) or 3
-    if (nowServer - (Runtime.Cache.LastWildThrowAt or 0)) < (throwCd + 0.1) then
-        return false
-    end
+    if (nowServer - (Runtime.Cache.LastWildThrowAt or 0)) < (throwCd + 0.1) then return false end
 
     local netName = Runtime.Helpers.PickHuntNet(true)
-    if not netName then
-        return false
-    end
+    if not netName then return false end
 
     local ok, res, reason, payload = false, false, nil, nil
     local needMove = false
@@ -7165,27 +6442,68 @@ function Runtime.Helpers.StepSightingCatch(plot)
     return false
 end
 
-function Runtime.Helpers.StepWildHunt(plot, buttons)
+function Runtime.Helpers.CanWildReroll(plot, buttons, tycoonComplete)
+    if Config.AutoHuntWild == false or Config.HuntRerollWild ~= true or not plot then return false end
+    if Runtime.Stats.FightingTurkeyBoss == true then return false end
+    if Config.HuntRerollRequireButtonsComplete ~= false and tycoonComplete ~= true then return false end
+    if not Runtime.Helpers.IsPlotPart2Active(plot) then return false end
+
+    local wildUtil = Modules.PumpkinWildUtil
+    if not wildUtil or (type(wildUtil.Enabled) == "function" and not wildUtil.Enabled()) then return false end
+
+    local rerollZone = math.clamp(math.floor(tonumber(Config.HuntRerollZone) or 1), 1, 8)
+    local zoneMeta = PT and PT.ZONES and PT.ZONES[rerollZone]
+    if not (zoneMeta and Modules.PumpkinButtonsUtil and Modules.PumpkinButtonsUtil.Owned(buttons, zoneMeta.Section .. "_Zone")) then
+        return false
+    end
+
+    if type(wildUtil.HugeWeight) == "function" then
+        local luck = (type(wildUtil.IslandLuck) == "function" and wildUtil.IslandLuck(LocalPlayer)) or 0
+        local okW, hugeWeight = pcall(wildUtil.HugeWeight, rerollZone, luck, wildUtil.SoldOut)
+        if okW and type(hugeWeight) == "number" and hugeWeight <= 0 then
+            if not Runtime.Cache.WildRerollSoldOutLogged then
+                Runtime.Cache.WildRerollSoldOutLogged = true
+                Log("INFO", "Wild Reroll paused: Zone %d Huge is sold out.", rerollZone)
+            end
+            return false
+        end
+        Runtime.Cache.WildRerollSoldOutLogged = false
+    end
+
+    local order = Modules.WildTypes and Modules.WildTypes.NET_ORDER
+    local netNormal = (type(order) == "table" and order[1]) or "Pet Net"
+    local keepNets = math.max(0, math.floor(tonumber(Config.HuntRerollKeepNets) or 15))
+    local normalCnt = Runtime.Helpers.GetNetCount(netNormal)
+    if normalCnt <= keepNets then return false end
+    return true, rerollZone, netNormal, normalCnt, keepNets
+end
+
+function Runtime.Helpers.StepWildHunt(plot, buttons, tycoonComplete)
     if Config.AutoHuntWild == false or not plot then
+        Runtime.Cache.WildRerollActive = false
         return
     end
     if not Runtime.Helpers.IsPlotPart2Active(plot) then
+        Runtime.Cache.WildRerollActive = false
         return
     end
     local wildUtil = Modules.PumpkinWildUtil
     if not wildUtil or (type(wildUtil.Enabled) == "function" and not wildUtil.Enabled()) then
+        Runtime.Cache.WildRerollActive = false
         return
     end
 
     local now = os.clock()
-    if (now - (Runtime.Cache.LastWildStepAt or 0)) < 0.4 then
-        return
-    end
+    if (now - (Runtime.Cache.LastWildStepAt or 0)) < (Runtime.Cache.WildRerollActive and 0.25 or 0.4) then return end
     Runtime.Cache.LastWildStepAt = now
 
     if (now - (Runtime.Cache.LastWildFailAt or 0)) < 3.0 then
+        Runtime.Cache.WildRerollActive = false
         return
     end
+
+    local canReroll, rerollZone, rerollNetName, normalCnt, keepNets = Runtime.Helpers.CanWildReroll(plot, buttons, tycoonComplete)
+    Runtime.Cache.WildRerollActive = (canReroll == true)
 
     -- Turn off built-in server Auto Hunt (80-stud / 6s) so it never collides with full-island custom hunt
     if Config.DisableServerAutoHunt ~= false and (now - (Runtime.Cache.LastHuntAutoSyncAt or 0)) >= 15.0 then
@@ -7209,13 +6527,12 @@ function Runtime.Helpers.StepWildHunt(plot, buttons)
     -- Ensure active Sighting check runs independently of AutoHuntWild via RunManagerTick
     local nowServer = workspace:GetServerTimeNow()
     local throwCd = (type(wildUtil.ThrowSeconds) == "function" and wildUtil.ThrowSeconds()) or 3
-    if (nowServer - (Runtime.Cache.LastWildThrowAt or 0)) < (throwCd + 0.1) then
-        return
-    end
+    if (nowServer - (Runtime.Cache.LastWildThrowAt or 0)) < (throwCd + 0.1) then return end
 
     local rawWild = Runtime.Helpers.GetPlotSave(plot, VAR.Wild)
     local entries = type(wildUtil.Entries) == "function" and wildUtil.Entries(rawWild) or nil
     if type(entries) ~= "table" or next(entries) == nil then
+        Runtime.Cache.WildRerollActive = false
         return
     end
 
@@ -7229,6 +6546,7 @@ function Runtime.Helpers.StepWildHunt(plot, buttons)
     local minChance = math.max(0, tonumber(Config.HuntMinCatchChance) or 0)
 
     local best = nil
+    local rerollBest = nil
     for slotKey, entry in pairs(entries) do
         local slotNum = tonumber(slotKey)
         if slotNum and type(entry) == "table" and type(entry.P) == "string" then
@@ -7293,6 +6611,7 @@ function Runtime.Helpers.StepWildHunt(plot, buttons)
                                             entry = entry,
                                             entryKey = entryKey,
                                             isHuge = isHuge,
+                                            isReroll = false,
                                             tier = tier,
                                             varRank = varRank,
                                             netName = netName,
@@ -7301,6 +6620,24 @@ function Runtime.Helpers.StepWildHunt(plot, buttons)
                                     end
                                 end
                             end
+                        elseif canReroll and zone == rerollZone and not isHuge then
+                            -- Pick lowest catch-chance non-Huge in rerollZone (both catch & miss reroll immediately; fewer junk pets caught)
+                            local chance = (type(wildUtil.PlayerChance) == "function" and wildUtil.PlayerChance(entry, rerollNetName, LocalPlayer))
+                                or (tonumber(entry.C) or 0)
+                            if not rerollBest or chance < rerollBest.chance or (chance == rerollBest.chance and slotNum < rerollBest.slot) then
+                                rerollBest = {
+                                    slot = slotNum,
+                                    zone = zone,
+                                    entry = entry,
+                                    entryKey = entryKey,
+                                    isHuge = false,
+                                    isReroll = true,
+                                    tier = tier,
+                                    varRank = 0,
+                                    netName = rerollNetName,
+                                    chance = chance,
+                                }
+                            end
                         end
                     end
                 end
@@ -7308,15 +6645,25 @@ function Runtime.Helpers.StepWildHunt(plot, buttons)
         end
     end
 
-    if not best then
+    local chosen = best or rerollBest
+    if not chosen then
+        if not canReroll then
+            Runtime.Cache.WildRerollActive = false
+        end
         return
     end
 
     -- Server checks proximity to the wild pet's WildArea_<zone> before accepting RU_Ensnare
     local catchPos = nil
     if wildFeat then
-        if type(wildFeat.Physical) == "function" then
-            local okP, phys = pcall(wildFeat.Physical, best.slot)
+        if chosen.isReroll and type(wildFeat.Areas) == "function" then
+            local okA, areaList = pcall(wildFeat.Areas, chosen.zone)
+            if okA and type(areaList) == "table" and areaList[1] and areaList[1]:IsA("BasePart") then
+                catchPos = areaList[1].Position + Vector3.new(0, 3, 0)
+            end
+        end
+        if not catchPos and type(wildFeat.Physical) == "function" then
+            local okP, phys = pcall(wildFeat.Physical, chosen.slot)
             if okP and type(phys) == "table" then
                 if phys.SpawnArea and phys.SpawnArea:IsA("BasePart") then
                     catchPos = phys.SpawnArea.Position + Vector3.new(0, 3, 0)
@@ -7326,7 +6673,7 @@ function Runtime.Helpers.StepWildHunt(plot, buttons)
             end
         end
         if not catchPos and type(wildFeat.Areas) == "function" then
-            local okA, areaList = pcall(wildFeat.Areas, best.zone)
+            local okA, areaList = pcall(wildFeat.Areas, chosen.zone)
             if okA and type(areaList) == "table" and areaList[1] and areaList[1]:IsA("BasePart") then
                 catchPos = areaList[1].Position + Vector3.new(0, 3, 0)
             end
@@ -7350,10 +6697,10 @@ function Runtime.Helpers.StepWildHunt(plot, buttons)
                 Runtime.Cache.LastTeleportAt = os.clock()
             end
             task.wait(0.35)
-            ok, res, reason, payload = pcall(plot.Invoke, plot, NET.CatchWild, best.slot, best.netName)
+            ok, res, reason, payload = pcall(plot.Invoke, plot, NET.CatchWild, chosen.slot, chosen.netName)
         end)
     else
-        ok, res, reason, payload = pcall(plot.Invoke, plot, NET.CatchWild, best.slot, best.netName)
+        ok, res, reason, payload = pcall(plot.Invoke, plot, NET.CatchWild, chosen.slot, chosen.netName)
     end
     if ok and res and type(payload) == "table" then
         Runtime.Cache.LastWildThrowAt = workspace:GetServerTimeNow()
@@ -7365,36 +6712,56 @@ function Runtime.Helpers.StepWildHunt(plot, buttons)
             end
         end
 
-        local varPrefix = (best.entry.S and "Shiny " or "")
-            .. (best.entry.R and "Rainbow " or (best.entry.G and "Golden " or ""))
+        local varPrefix = (chosen.entry.S and "Shiny " or "")
+            .. (chosen.entry.R and "Rainbow " or (chosen.entry.G and "Golden " or ""))
         if payload.outcome == "soldout" then
-            slotCooldowns[best.entryKey] = now + 30.0
-            Log("INFO", "Wild Huge sold out: [%s%s] (slot %d, Z%d)", varPrefix, best.entry.P, best.slot, best.zone)
+            slotCooldowns[chosen.entryKey] = now + 30.0
+            Log("INFO", "Wild Huge sold out: [%s%s] (slot %d, Z%d)", varPrefix, chosen.entry.P, chosen.slot, chosen.zone)
+        elseif chosen.isReroll then
+            slotCooldowns[chosen.entryKey] = now + 4.0
+            if payload.caught == true and type(payload.uid) == "string" and Modules.Network and Modules.Network.Fire then
+                pcall(Modules.Network.Fire, "SM_Unmask", { payload.uid })
+            end
+            local nextPet = type(payload.entry) == "table" and tostring(payload.entry.P or "?") or "?"
+            local netsLeft = math.max(0, (normalCnt or 1) - 1)
+            if netsLeft <= (keepNets or 15) then
+                Runtime.Cache.WildRerollActive = false
+            end
+            local nextInfo = type(payload.entry) == "table" and Runtime.Helpers.GetWildSpeciesInfo(chosen.zone, nextPet) or nil
+            if nextInfo and nextInfo.huge == true then
+                Log("INFO", "Wild Reroll popped HUGE [%s] on slot %d (Z%d, nets=%d/%d)",
+                    nextPet, chosen.slot, chosen.zone, netsLeft, keepNets or 15)
+            else
+                Log("DEBUG", "Rerolled Wild Z%d slot %d [%s -> %s] (%s, nets=%d/%d)",
+                    chosen.zone, chosen.slot, chosen.entry.P, nextPet,
+                    payload.caught == true and "caught" or "missed", netsLeft, keepNets or 15)
+            end
         elseif payload.caught == true then
-            slotCooldowns[best.entryKey] = now + 4.0
+            slotCooldowns[chosen.entryKey] = now + 4.0
             if type(payload.uid) == "string" and Modules.Network and Modules.Network.Fire then
                 pcall(Modules.Network.Fire, "SM_Unmask", { payload.uid })
             end
             Runtime.Stats.WildCaught = (Runtime.Stats.WildCaught or 0) + 1
-            if best.isHuge then
+            if chosen.isHuge then
                 Runtime.Stats.WildHugesCaught = (Runtime.Stats.WildHugesCaught or 0) + 1
             end
             Log("INFO", "Caught Wild [%s%s] (slot %d, Z%d, net=%s, chance=%.1f%%)",
-                varPrefix, best.entry.P, best.slot, best.zone, best.netName, (best.chance or 0) * 100)
+                varPrefix, chosen.entry.P, chosen.slot, chosen.zone, chosen.netName, (chosen.chance or 0) * 100)
         else
-            slotCooldowns[best.entryKey] = now + 4.0
+            slotCooldowns[chosen.entryKey] = now + 4.0
             Log("INFO", "Missed Wild [%s%s] (slot %d, Z%d, net=%s, chance=%.1f%%)",
-                varPrefix, best.entry.P, best.slot, best.zone, best.netName, (best.chance or 0) * 100)
+                varPrefix, chosen.entry.P, chosen.slot, chosen.zone, chosen.netName, (chosen.chance or 0) * 100)
         end
 
         if wildFeat and type(wildFeat.Respawn) == "function" then
-            pcall(wildFeat.Respawn, best.slot)
+            pcall(wildFeat.Respawn, chosen.slot)
         end
         return
     end
 
     Runtime.Cache.LastWildFailAt = os.clock()
-    Log("DEBUG", "Wild catch failed [%s slot %d net=%s]: %s", tostring(best.entry.P), best.slot, best.netName, tostring(reason or res))
+    Runtime.Cache.WildRerollActive = false
+    Log("DEBUG", "Wild catch failed [%s slot %d net=%s]: %s", tostring(chosen.entry.P), chosen.slot, chosen.netName, tostring(reason or res))
 end
 
 -- ============================================================================
@@ -7404,9 +6771,7 @@ function Runtime.Helpers.GetTurkeySharedModel()
     local things = Workspace:FindFirstChild("__THINGS")
     local instances = things and things:FindFirstChild("Instances")
     local instFolder = instances and instances:FindFirstChild(INSTANCE_ID)
-    if not instFolder then
-        return nil
-    end
+    if not instFolder then return nil end
     local sharedName = (Modules.PumpkinIslandCmds and Modules.PumpkinIslandCmds.SHARED_NAME) or "PumpkinTycoonShared"
     return instFolder:FindFirstChild(sharedName)
 end
@@ -7415,9 +6780,7 @@ function Runtime.Helpers.GetTurkeyReach()
     local util = Modules.PumpkinTurkeyUtil
     if util and type(util.Dial) == "function" then
         local ok, r = pcall(util.Dial, "PumpkinTycoon_TurkeyReach")
-        if ok and type(r) == "number" and r >= 20 then
-            return r
-        end
+        if ok and type(r) == "number" and r >= 20 then return r end
     end
     return 150
 end
@@ -7426,44 +6789,28 @@ function Runtime.Helpers.OwnsTurkeyCannon(plot, buttons)
     local tCmds = Modules.PumpkinTurkeyCmds
     if tCmds and type(tCmds.OwnsCannon) == "function" then
         local ok, res = pcall(tCmds.OwnsCannon)
-        if ok and type(res) == "boolean" then
-            return res
-        end
+        if ok and type(res) == "boolean" then return res end
     end
-    if not plot then
-        return false
-    end
-    if Runtime.Helpers.GetPlotSave(plot, VAR.CannonEver) == true then
-        return true
-    end
+    if not plot then return false end
+    if Runtime.Helpers.GetPlotSave(plot, VAR.CannonEver) == true then return true end
     local reb = tonumber(Runtime.Helpers.GetPlotSave(plot, VAR.Rebirths)) or 0
-    if reb >= 1 then
-        return true
-    end
+    if reb >= 1 then return true end
     local btns = buttons or Runtime.Cache.Buttons or Runtime.Helpers.GetPlotSave(plot, VAR.Buttons)
     if PT and type(PT.HasCannonButton) == "function" and btns then
         local ok, has = pcall(PT.HasCannonButton, btns)
-        if ok and has == true then
-            return true
-        end
+        if ok and has == true then return true end
     end
     return false
 end
 
 function Runtime.Helpers.FindTurkeyBossBreakable()
-    if not Modules.BreakableFrontend or not Modules.BreakableFrontend.AllByInstanceAndClass then
-        return nil, nil, nil
-    end
+    if not Modules.BreakableFrontend or not Modules.BreakableFrontend.AllByInstanceAndClass then return nil, nil, nil end
     local ok, chests = pcall(Modules.BreakableFrontend.AllByInstanceAndClass, "Chest")
-    if not ok or type(chests) ~= "table" then
-        return nil, nil, nil
-    end
+    if not ok or type(chests) ~= "table" then return nil, nil, nil end
     for uid, data in pairs(chests) do
         local attrs = data and data.clientAttributes
         local model = data and data.model
-        if type(attrs) == "table" and attrs.PumpkinTurkey == true and model and model.Parent then
-            return tostring(uid), data, model
-        end
+        if type(attrs) == "table" and attrs.PumpkinTurkey == true and model and model.Parent then return tostring(uid), data, model end
     end
     return nil, nil, nil
 end
@@ -7503,26 +6850,76 @@ function Runtime.Helpers.GetTurkeyArenaStandPos(shared, bossModel)
     return Vector3.new(probe.X, groundY + 3.2, probe.Z), center
 end
 
+function Runtime.Helpers.ParseTurkeyTop(shared, topAttrName)
+    local raw = shared and shared:GetAttribute(topAttrName or "TurkeyTop") or nil
+    if type(raw) ~= "string" or raw == "" then
+        Runtime.Cache.TurkeyBossTopRaw = nil
+        Runtime.Cache.TurkeyBossTopParsed = nil
+        return {
+            totalFighters = 0,
+            otherFighters = 0,
+            otherShareSum = 0,
+            otherDps = 0,
+            myShare = 0,
+            myDps = 0,
+        }
+    end
+    if raw == Runtime.Cache.TurkeyBossTopRaw and type(Runtime.Cache.TurkeyBossTopParsed) == "table" then
+        return Runtime.Cache.TurkeyBossTopParsed
+    end
+
+    local selfName = LocalPlayer and LocalPlayer.Name or ""
+    local parsed = {
+        totalFighters = 0,
+        otherFighters = 0,
+        otherShareSum = 0,
+        otherDps = 0,
+        myShare = 0,
+        myDps = 0,
+    }
+    local okDec, rows = pcall(HttpService.JSONDecode, HttpService, raw)
+    if okDec and type(rows) == "table" then
+        for _, row in ipairs(rows) do
+            if type(row) == "table" and type(row[1]) == "string" then
+                local uname = row[1]
+                local share = math.max(0, tonumber(row[2]) or 0)
+                local dps = math.max(0, tonumber(row[3]) or 0)
+                parsed.totalFighters = parsed.totalFighters + 1
+                if uname == selfName then
+                    parsed.myShare = share
+                    parsed.myDps = dps
+                else
+                    if share > 0 or dps > 0 then
+                        parsed.otherFighters = parsed.otherFighters + 1
+                    end
+                    parsed.otherShareSum = parsed.otherShareSum + share
+                    parsed.otherDps = parsed.otherDps + dps
+                end
+            end
+        end
+    end
+    if parsed.myDps > 0 then
+        Runtime.Cache.TurkeyBossLastMyDps = parsed.myDps
+    end
+    Runtime.Cache.TurkeyBossTopRaw = raw
+    Runtime.Cache.TurkeyBossTopParsed = parsed
+    return parsed
+end
+
 function Runtime.Helpers.GetTurkeyBossState(plot, buttons)
     if Config.AutoTurkeyBoss == false or not plot or not IsInEventInstance() then
-        return nil
+        return nil, (Config.AutoTurkeyBoss == false) and "disabled" or nil
     end
-    if not Runtime.Helpers.IsPlotPart2Active(plot) then
-        return nil
-    end
+    if not Runtime.Helpers.IsPlotPart2Active(plot) then return nil, nil end
 
     local util = Modules.PumpkinTurkeyUtil
     if util and type(util.Enabled) == "function" then
         local okE, en = pcall(util.Enabled)
-        if okE and en == false then
-            return nil
-        end
+        if okE and en == false then return nil, nil end
     end
 
     local ownsCannon = Runtime.Helpers.OwnsTurkeyCannon(plot, buttons)
-    if Config.TurkeyBossRequireCannon == true and not ownsCannon then
-        return nil
-    end
+    if Config.TurkeyBossRequireCannon == true and not ownsCannon then return nil, nil end
 
     local shared = Runtime.Helpers.GetTurkeySharedModel()
     local attrMap = (util and util.ATTR) or {}
@@ -7530,6 +6927,7 @@ function Runtime.Helpers.GetTurkeyBossState(plot, buttons)
     local endsAttr = attrMap.EndsAt or "TurkeyEndsAt"
     local hpAttr = attrMap.Health or "TurkeyHealth"
     local maxHpAttr = attrMap.MaxHealth or "TurkeyMaxHealth"
+    local topAttr = attrMap.Top or "TurkeyTop"
     local shareAttr = (util and util.SHARE_ATTR) or "PumpkinTurkeyShare"
 
     local alive = shared ~= nil and shared:GetAttribute(aliveAttr) == true
@@ -7540,13 +6938,20 @@ function Runtime.Helpers.GetTurkeyBossState(plot, buttons)
     local uid, data, model = Runtime.Helpers.FindTurkeyBossBreakable()
     local nowServer = workspace:GetServerTimeNow()
     local isLive = (model ~= nil) or (alive and (endsAt <= 0 or nowServer < (endsAt + 2)))
-    if not isLive then
-        return nil
-    end
+    if not isLive then return nil, nil end
 
     local windowKey = (endsAt > 0) and endsAt or 1
-    if Runtime.Cache.TurkeyBossSkippedEndsAt == windowKey then
-        return nil
+    if Runtime.Cache.TurkeyBossSkippedEndsAt == windowKey then return nil, "skipped" end
+
+    if Runtime.Cache.TurkeyBossWatchedWindow ~= windowKey then
+        Runtime.Cache.TurkeyBossWatchedWindow = windowKey
+        Runtime.Cache.TurkeyBossOtherShareSum = 0
+        Runtime.Cache.TurkeyBossOtherActiveAt = 0
+        Runtime.Cache.TurkeyBossHpSampleAt = 0
+        Runtime.Cache.TurkeyBossHpSampleVal = nil
+        Runtime.Cache.TurkeyBossRejoinAfterAt = 0
+        Runtime.Cache.TurkeyBossLastPassiveLogAt = 0
+        Runtime.Cache.TurkeyBossLastPassiveLogKey = nil
     end
 
     local myShare = tonumber(LocalPlayer and LocalPlayer:GetAttribute(shareAttr)) or 0
@@ -7554,7 +6959,7 @@ function Runtime.Helpers.GetTurkeyBossState(plot, buttons)
     if minShareStop > 0 and myShare >= minShareStop then
         Runtime.Cache.TurkeyBossSkippedEndsAt = windowKey
         Log("INFO", "Turkey Boss share reached %.2f%% (>= %.2f%%); returning to island.", myShare * 100, minShareStop * 100)
-        return nil
+        return nil, "min_share"
     end
 
     local noDmgTimeout = tonumber(Config.TurkeyBossNoDamageTimeoutSec) or 25
@@ -7563,7 +6968,7 @@ function Runtime.Helpers.GetTurkeyBossState(plot, buttons)
         if (os.clock() - engagedAt) >= noDmgTimeout then
             Runtime.Cache.TurkeyBossSkippedEndsAt = windowKey
             Log("WARN", "Turkey Boss recorded 0%% share without Zone8_Cannon after %.0fs; skipping this spawn.", noDmgTimeout)
-            return nil
+            return nil, "no_damage"
         end
     end
 
@@ -7572,6 +6977,129 @@ function Runtime.Helpers.GetTurkeyBossState(plot, buttons)
     end
     if maxHealth == nil and type(data) == "table" and type(data.maxHealth) == "number" then
         maxHealth = data.maxHealth
+    end
+    health = tonumber(health) or 0
+    maxHealth = tonumber(maxHealth) or 0
+
+    -- Smart Killability & Solo Probe guard: prevent wasting 15m/20m on mathematically unkillable solo/low-DPS bosses
+    if Config.TurkeyBossSmartKillCheck ~= false and health > 0 and maxHealth > 0 and endsAt > 0 then
+        local nowClk = os.clock()
+        local secLeft = math.max(1, endsAt - nowServer)
+        local top = Runtime.Helpers.ParseTurkeyTop(shared, topAttr)
+        -- Ignore stale TurkeyTop rows left over from the previous boss before any damage lands on the new spawn
+        if health >= (maxHealth * 0.999) then
+            top = {
+                totalFighters = 0,
+                otherFighters = 0,
+                otherShareSum = 0,
+                otherDps = 0,
+                myShare = 0,
+                myDps = 0,
+            }
+        end
+
+        -- Track real damage progress from other players (detects stale TurkeyTop rows when other players leave)
+        if top.otherShareSum > ((Runtime.Cache.TurkeyBossOtherShareSum or 0) + 1e-6) then
+            Runtime.Cache.TurkeyBossOtherShareSum = top.otherShareSum
+            Runtime.Cache.TurkeyBossOtherActiveAt = nowClk
+        elseif top.otherFighters == 0 then
+            Runtime.Cache.TurkeyBossOtherActiveAt = 0
+        end
+
+        local otherActive = (top.otherFighters > 0)
+            and ((Runtime.Cache.TurkeyBossOtherActiveAt or 0) > 0)
+            and ((nowClk - Runtime.Cache.TurkeyBossOtherActiveAt) <= 20.0)
+
+        -- Track observed real HP drop rate while actively fighting
+        local observedDps = nil
+        if Runtime.Stats.FightingTurkeyBoss and engagedAt > 0 then
+            if (Runtime.Cache.TurkeyBossHpSampleAt or 0) == 0 or Runtime.Cache.TurkeyBossHpSampleVal == nil then
+                Runtime.Cache.TurkeyBossHpSampleAt = nowClk
+                Runtime.Cache.TurkeyBossHpSampleVal = health
+            else
+                local dt = nowClk - Runtime.Cache.TurkeyBossHpSampleAt
+                if dt >= 15.0 then
+                    local dropped = math.max(0, (Runtime.Cache.TurkeyBossHpSampleVal or health) - health)
+                    observedDps = dropped / dt
+                    if dt >= 30.0 then
+                        Runtime.Cache.TurkeyBossHpSampleAt = nowClk
+                        Runtime.Cache.TurkeyBossHpSampleVal = health
+                    end
+                end
+            end
+        end
+
+        local contribMin = 0.01
+        local soloShare = 0.9
+        local lifeSec = 900
+        if util and type(util.Dial) == "function" then
+            local okC, valC = pcall(util.Dial, "PumpkinTycoon_TurkeyContribMin")
+            if okC and type(valC) == "number" and valC > 0 then contribMin = valC end
+            local okS, valS = pcall(util.Dial, "PumpkinTycoon_TurkeySoloShare")
+            if okS and type(valS) == "number" and valS > 0 then soloShare = valS end
+        end
+        if util and type(util.Life) == "function" then
+            local okL, valL = pcall(util.Life)
+            if okL and type(valL) == "number" and valL > 0 then lifeSec = valL end
+        end
+
+        local soloCapDps = (maxHealth * soloShare) / math.max(1, lifeSec)
+        local myDpsEst = (top.myDps > 0 and top.myDps)
+            or ((Runtime.Cache.TurkeyBossLastMyDps or 0) > 0 and Runtime.Cache.TurkeyBossLastMyDps)
+            or (soloCapDps * 0.72)
+        local killMargin = math.clamp(tonumber(Config.TurkeyBossKillMargin) or 0.85, 0.5, 1.2)
+        local probeSec = math.max(0, tonumber(Config.TurkeyBossSoloProbeSec) or 25)
+
+        local remShare = health / maxHealth
+        local canSoloFinish = (myDpsEst * secLeft >= health * 1.05) and ((myShare + remShare) < soloShare)
+
+        local shouldAbortReason = nil
+        local effectiveDps = myDpsEst
+
+        if otherActive then
+            local reportedTeamDps = top.otherDps + myDpsEst
+            effectiveDps = (observedDps ~= nil and observedDps > 0) and observedDps or reportedTeamDps
+            local projectedDmg = effectiveDps * secLeft
+            if projectedDmg < (health * killMargin) then
+                shouldAbortReason = "low_dps"
+            end
+        elseif not canSoloFinish then
+            -- Solo and cannot finish alone: allow one short probe on a fresh spawn, then wait passively on home island
+            -- Require boss HP < 99% before treating myShare >= contribMin as already contributed (guards stale attribute at spawn)
+            local contributedThisSpawn = (myShare >= contribMin) and (health < (maxHealth * 0.99))
+            local alreadyProbed = (Runtime.Cache.TurkeyBossProbedWindow == windowKey) or contributedThisSpawn
+            if alreadyProbed or probeSec <= 0 or secLeft < 120 then
+                shouldAbortReason = "solo_unkillable"
+            elseif Runtime.Stats.FightingTurkeyBoss and engagedAt > 0 and (nowClk - engagedAt) >= probeSec then
+                Runtime.Cache.TurkeyBossProbedWindow = windowKey
+                shouldAbortReason = "solo_unkillable"
+            end
+        end
+
+        if not shouldAbortReason and not Runtime.Stats.FightingTurkeyBoss and nowClk < (Runtime.Cache.TurkeyBossRejoinAfterAt or 0) then
+            return nil, "cooldown"
+        end
+
+        if shouldAbortReason then
+            if Runtime.Stats.FightingTurkeyBoss then
+                Runtime.Cache.TurkeyBossRejoinAfterAt = nowClk + 15.0
+            end
+            local logKey = tostring(windowKey) .. ":" .. shouldAbortReason
+            if Runtime.Cache.TurkeyBossLastPassiveLogKey ~= logKey
+                or (nowClk - (Runtime.Cache.TurkeyBossLastPassiveLogAt or 0)) >= 120.0
+            then
+                Runtime.Cache.TurkeyBossLastPassiveLogKey = logKey
+                Runtime.Cache.TurkeyBossLastPassiveLogAt = nowClk
+                local neededDps = health / secLeft
+                Log("INFO", "Turkey Boss paused (%s: activeOthers=%d, estDps=%.2fM/s, needDps=%.2fM/s, left=%.0fs); watching TurkeyTop from island.",
+                    shouldAbortReason,
+                    otherActive and top.otherFighters or 0,
+                    effectiveDps / 1e6,
+                    neededDps / 1e6,
+                    secLeft)
+            end
+            return nil, shouldAbortReason
+        end
     end
 
     local standPos, centerPos = Runtime.Helpers.GetTurkeyArenaStandPos(shared, model)
@@ -7582,31 +7110,39 @@ function Runtime.Helpers.GetTurkeyBossState(plot, buttons)
         model = model,
         endsAt = endsAt,
         windowKey = windowKey,
-        health = health or 0,
-        maxHealth = maxHealth or 0,
+        health = health,
+        maxHealth = maxHealth,
         share = myShare,
         ownsCannon = ownsCannon,
         standPos = standPos,
         centerPos = centerPos,
-    }
+    }, nil
 end
 
-function Runtime.Helpers.ReturnFromTurkeyArena(plot)
+function Runtime.Helpers.ReturnFromTurkeyArena(plot, leaveReason)
     local prevShare = tonumber(Runtime.Stats.TurkeyBossShare) or 0
     local prevEndsAt = tonumber(Runtime.Cache.TurkeyBossActiveEndsAt) or 0
     local prevHp = tonumber(Runtime.Cache.TurkeyBossLastHealth)
     local nowServer = workspace:GetServerTimeNow()
     local contribMin = 0.01
-    if Modules.PumpkinTurkeyUtil and type(Modules.PumpkinTurkeyUtil.Dial) == "function" then
-        local okC, val = pcall(Modules.PumpkinTurkeyUtil.Dial, "PumpkinTycoon_TurkeyContribMin")
-        if okC and type(val) == "number" and val > 0 then
-            contribMin = val
+    local aliveAttr = "TurkeyAlive"
+    if Modules.PumpkinTurkeyUtil then
+        if type(Modules.PumpkinTurkeyUtil.Dial) == "function" then
+            local okC, val = pcall(Modules.PumpkinTurkeyUtil.Dial, "PumpkinTycoon_TurkeyContribMin")
+            if okC and type(val) == "number" and val > 0 then
+                contribMin = val
+            end
+        end
+        if type(Modules.PumpkinTurkeyUtil.ATTR) == "table" and Modules.PumpkinTurkeyUtil.ATTR.Alive then
+            aliveAttr = Modules.PumpkinTurkeyUtil.ATTR.Alive
         end
     end
 
+    local shared = Runtime.Helpers.GetTurkeySharedModel()
+    local aliveNow = (shared ~= nil and shared:GetAttribute(aliveAttr) == true)
     local prevWindowKey = (prevEndsAt > 0) and prevEndsAt or 1
-    local skipped = (Runtime.Cache.TurkeyBossSkippedEndsAt == prevWindowKey)
-    local killed = (not skipped) and ((prevHp ~= nil and prevHp <= 0) or (prevEndsAt > 0 and nowServer < (prevEndsAt - 5)))
+    local skipped = (leaveReason ~= nil) or (Runtime.Cache.TurkeyBossSkippedEndsAt == prevWindowKey)
+    local killed = (not skipped) and (not aliveNow) and ((prevHp ~= nil and prevHp <= 0) or (prevEndsAt > 0 and nowServer < (prevEndsAt - 5)))
     if killed and prevShare >= contribMin then
         Runtime.Stats.TurkeyBossKills = (Runtime.Stats.TurkeyBossKills or 0) + 1
     end
@@ -7618,11 +7154,14 @@ function Runtime.Helpers.ReturnFromTurkeyArena(plot)
     Runtime.Cache.TurkeyBossActiveEndsAt = 0
     Runtime.Cache.TurkeyBossEngagedAt = 0
     Runtime.Cache.TurkeyBossLastHealth = nil
+    Runtime.Cache.TurkeyBossHpSampleAt = 0
+    Runtime.Cache.TurkeyBossHpSampleVal = nil
     activeFarmTarget = nil
     Runtime.Cache.TapTargets = nil
     Runtime.Stats.ActiveTargetUid = nil
 
-    Log("INFO", "Turkey Boss session ended (killed=%s, share=%.2f%%); returning to home island.", tostring(killed), prevShare * 100)
+    Log("INFO", "Turkey Boss session ended (killed=%s, reason=%s, share=%.2f%%); returning to home island.",
+        tostring(killed), tostring(leaveReason or (killed and "killed" or "timeout")), prevShare * 100)
 
     local retPos = Runtime.Cache.TurkeyBossReturnPos
     Runtime.Cache.TurkeyBossReturnPos = nil
@@ -7645,10 +7184,10 @@ function Runtime.Helpers.ReturnFromTurkeyArena(plot)
 end
 
 function Runtime.Helpers.StepTurkeyBossTarget(plot)
-    local bossState = Runtime.Helpers.GetTurkeyBossState(plot, Runtime.Cache.Buttons)
+    local bossState, leaveReason = Runtime.Helpers.GetTurkeyBossState(plot, Runtime.Cache.Buttons)
     if not bossState then
         if Runtime.Stats.FightingTurkeyBoss then
-            Runtime.Helpers.ReturnFromTurkeyArena(plot)
+            Runtime.Helpers.ReturnFromTurkeyArena(plot, leaveReason)
         end
         return false
     end
@@ -7726,61 +7265,42 @@ end
 -- ============================================================================
 -- 12B. KAITUN BLACK DASHBOARD UI
 -- ============================================================================
-local COMPACT_SUFFIXES = {
-    { 1e39, "Dd" },
-    { 1e36, "Ud" },
-    { 1e33, "Dc" },
-    { 1e30, "No" },
-    { 1e27, "Oc" },
-    { 1e24, "Sp" },
-    { 1e21, "Sx" },
-    { 1e18, "Qi" },
-    { 1e15, "Qa" },
-    { 1e12, "T" },
-    { 1e9,  "B" },
-    { 1e6,  "M" },
-    { 1e3,  "K" },
+local UI = {
+    COMPACT_SUFFIXES = {
+        { 1e39, "Dd" }, { 1e36, "Ud" }, { 1e33, "Dc" }, { 1e30, "No" },
+        { 1e27, "Oc" }, { 1e24, "Sp" }, { 1e21, "Sx" }, { 1e18, "Qi" },
+        { 1e15, "Qa" }, { 1e12, "T" },  { 1e9,  "B" },  { 1e6,  "M" },  { 1e3, "K" },
+    },
+    KEEP_RUNG_SHORT = {
+        [2] = "Rare", [3] = "Epic", [4] = "Leg", [5] = "Myth", [6] = "Exotic", [7] = "Divine", [8] = "Secret",
+    },
+    BOOST_IDS_FALLBACK = {
+        Coins = { "PumpkinTycoonCoins1", "PumpkinTycoonCoins2", "PumpkinTycoonCoins3" },
+        Damage = { "PumpkinTycoonDamage1", "PumpkinTycoonDamage2", "PumpkinTycoonDamage3" },
+        IslandLuck = { "PumpkinTycoonIslandLuck1", "PumpkinTycoonIslandLuck2", "PumpkinTycoonIslandLuck3" },
+    },
 }
 
-local KEEP_RUNG_SHORT = {
-    [2] = "Rare",
-    [3] = "Epic",
-    [4] = "Leg",
-    [5] = "Myth",
-    [6] = "Exotic",
-    [7] = "Divine",
-    [8] = "Secret",
-}
-
-local function FormatTime(seconds)
+function UI.FormatTime(seconds)
     seconds = math.max(0, tonumber(seconds) or 0)
-    local hrs = math.floor(seconds / 3600)
-    local mins = math.floor((seconds % 3600) / 60)
-    local secs = math.floor(seconds % 60)
-    return string.format("%02d:%02d:%02d", hrs, mins, secs)
+    return string.format("%02d:%02d:%02d", math.floor(seconds / 3600), math.floor((seconds % 3600) / 60), math.floor(seconds % 60))
 end
 
-local function FormatCompactNumber(n)
+function UI.FormatCompactNumber(n)
     n = tonumber(n) or 0
-    if n ~= n or n == math.huge or n == -math.huge then
-        return "0"
-    end
+    if n ~= n or n == math.huge or n == -math.huge then return "0" end
     local sign = ""
     if n < 0 then
         sign = "-"
         n = -n
     end
-    if n < 1000 then
-        return sign .. tostring(math.floor(n))
-    end
-    for idx, entry in ipairs(COMPACT_SUFFIXES) do
+    if n < 1000 then return sign .. tostring(math.floor(n)) end
+    for idx, entry in ipairs(UI.COMPACT_SUFFIXES) do
         if n >= entry[1] then
-            local scaled = n / entry[1]
-            local rounded = math.floor(scaled * 100 + 0.5) / 100
+            local rounded = math.floor((n / entry[1]) * 100 + 0.5) / 100
             if rounded >= 1000 and idx > 1 then
-                local nextEntry = COMPACT_SUFFIXES[idx - 1]
-                rounded = math.floor((n / nextEntry[1]) * 100 + 0.5) / 100
-                entry = nextEntry
+                entry = UI.COMPACT_SUFFIXES[idx - 1]
+                rounded = math.floor((n / entry[1]) * 100 + 0.5) / 100
             end
             local text = string.format("%.2f", rounded):gsub("%.00$", ""):gsub("(%.[1-9])0$", "%1")
             return sign .. text .. entry[2]
@@ -7789,102 +7309,36 @@ local function FormatCompactNumber(n)
     return sign .. tostring(math.floor(n))
 end
 
-local function FormatCommas(n)
-    local floored = math.floor(tonumber(n) or 0)
-    local s = tostring(floored)
-    return (s:reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", ""))
-end
-
-local function FormatIslandLuck(val)
+function UI.FormatIslandLuck(val)
     val = tonumber(val) or 0
-    if val ~= val or val == math.huge or val == -math.huge or val < 0 then
-        val = 0
-    end
+    if val ~= val or val == math.huge or val == -math.huge or val < 0 then val = 0 end
     local rounded = math.floor(val + 0.5)
-    if rounded >= 1e6 then
-        return "+" .. FormatCompactNumber(rounded) .. "%"
-    end
-    return "+" .. FormatCommas(rounded) .. "%"
+    if rounded >= 1e6 then return "+" .. UI.FormatCompactNumber(rounded) .. "%" end
+    return "+" .. Runtime.Helpers.FormatCommas(rounded) .. "%"
 end
 
-local function FormatShortTimer(sec)
+function UI.FormatShortTimer(sec)
     sec = tonumber(sec) or 0
-    if sec ~= sec or sec <= 0 or sec == math.huge then
-        return "Off"
-    end
+    if sec ~= sec or sec <= 0 or sec == math.huge then return "Off" end
     local s = math.max(1, math.floor(sec))
-    if s < 60 then
-        return string.format("%ds", s)
-    end
-    if s < 3600 then
-        return string.format("%dm%02ds", math.floor(s / 60), s % 60)
-    end
+    if s < 60 then return string.format("%ds", s) end
+    if s < 3600 then return string.format("%dm%02ds", math.floor(s / 60), s % 60) end
     return string.format("%dh%02dm", math.floor(s / 3600), math.floor((s % 3600) / 60))
 end
 
-local function FormatKeepLabel(keepRung)
+function UI.FormatKeepLabel(keepRung)
+    if type(keepRung) == "string" and keepRung ~= "" then return keepRung end
     local r = math.floor(tonumber(keepRung) or 0)
-    if r <= 0 or r == 1 then
-        return "Off"
-    end
-    local shortName = KEEP_RUNG_SHORT[r]
-    if shortName then
-        return string.format("%s (%d+)", shortName, r)
-    end
-    return string.format("R%d+", r)
+    if r <= 0 or r == 1 then return "Off" end
+    local shortName = UI.KEEP_RUNG_SHORT[r]
+    return shortName and string.format("%s (%d+)", shortName, r) or string.format("R%d+", r)
 end
 
-local function GetFlannelGiftBagCount()
-    local giftName = (Modules.PumpkinGiftUtil and Modules.PumpkinGiftUtil.ID)
-        or (Modules.ButtonsTypes and Modules.ButtonsTypes.COMPLETION_GIFT)
-        or "Flannel Gift"
-    local total = 0
-    if Modules.Save and Modules.Save.Get then
-        local ok, saveData = pcall(Modules.Save.Get)
-        local boxes = ok and type(saveData) == "table" and saveData.Inventory and saveData.Inventory.Lootbox
-        if type(boxes) == "table" then
-            if next(boxes) == nil then
-                return 0
-            end
-            for _, d in pairs(boxes) do
-                if type(d) == "table" and (d.id == giftName or d._id == giftName) then
-                    total = total + (tonumber(d._am) or 1)
-                end
-            end
-            return total
-        end
-    end
-    if Modules.LootboxItem then
-        pcall(function()
-            local list = Modules.LootboxItem(giftName):FindAny()
-            if type(list) == "table" then
-                for _, item in ipairs(list) do
-                    if item and item.GetAmount then
-                        total = total + (tonumber(item:GetAmount()) or 1)
-                    end
-                end
-            end
-        end)
-    end
-    return total
-end
-
-local BOOST_IDS_FALLBACK = {
-    Coins = { "PumpkinTycoonCoins1", "PumpkinTycoonCoins2", "PumpkinTycoonCoins3" },
-    Damage = { "PumpkinTycoonDamage1", "PumpkinTycoonDamage2", "PumpkinTycoonDamage3" },
-    IslandLuck = { "PumpkinTycoonIslandLuck1", "PumpkinTycoonIslandLuck2", "PumpkinTycoonIslandLuck3" },
-}
-
-local function GetAxisBoostSeconds(axis)
-    local ids = Modules.PumpkinBoostsUtil and Modules.PumpkinBoostsUtil.IDS and Modules.PumpkinBoostsUtil.IDS[axis]
-    if type(ids) ~= "table" then
-        ids = BOOST_IDS_FALLBACK[axis]
-    end
-    if type(ids) ~= "table" then
-        return 0
-    end
-    local pausedSum = 0
-    local activeMax = 0
+function Runtime.Helpers.GetAxisBoostSeconds(axis)
+    local ids = (Modules.PumpkinBoostsUtil and Modules.PumpkinBoostsUtil.IDS and Modules.PumpkinBoostsUtil.IDS[axis])
+        or UI.BOOST_IDS_FALLBACK[axis]
+    if type(ids) ~= "table" then return 0 end
+    local pausedSum, activeMax = 0, 0
     for tier = 1, #ids do
         local boostId = ids[tier]
         local sec = boostId and GetBoostTimerSeconds(boostId) or 0
@@ -7903,19 +7357,13 @@ local function GetAxisBoostSeconds(axis)
     end
     return pausedSum + activeMax
 end
-Runtime.Helpers.GetAxisBoostSeconds = GetAxisBoostSeconds
 
-local function ReadPedestalLockCounts(plot)
-    if not plot then
-        return 0, 0
-    end
+function UI.ReadPedestalLockCounts(plot)
+    if not plot then return 0, 0 end
     local raw = Runtime.Helpers.GetPlotSave(plot, VAR.Pedestals)
-    if type(raw) ~= "table" then
-        return tonumber(Runtime.Stats.LockedPedestals) or 0, tonumber(Runtime.Stats.MaxKeepSlots) or 0
-    end
+    if type(raw) ~= "table" then return tonumber(Runtime.Stats.LockedPedestals) or 0, tonumber(Runtime.Stats.MaxKeepSlots) or 0 end
     local maxPed = (PT and PT.MAX_PEDESTALS) or 8
-    local unlocked = 0
-    local locked = 0
+    local unlocked, locked = 0, 0
     for i = 1, maxPed do
         local entry = raw[i]
         if type(entry) == "table" and entry.Unlocked == true then
@@ -7925,22 +7373,26 @@ local function ReadPedestalLockCounts(plot)
             end
         end
     end
-    local effKeep, _, maxKeep = GetKeepLockSettings(nil, unlocked, plot, Runtime.Cache.Buttons)
+    local effKeep, lockMin, maxKeep, _, smartLuckMode =
+        GetKeepLockSettings(nil, unlocked, plot, Runtime.Cache.Buttons, Runtime.Stats.TycoonComplete)
+    if smartLuckMode then
+        local _, keepList, sumLuck, luckCap = Runtime.Helpers.ComputeSmartLuckKeepSet(AnalyzePedestals(plot), lockMin, maxKeep)
+        maxKeep = math.max(#keepList, (sumLuck < luckCap) and maxKeep or #keepList)
+        effKeep = "Luck100"
+    end
     Runtime.Stats.LockedPedestals = locked
     Runtime.Stats.MaxKeepSlots = maxKeep
     return locked, maxKeep, effKeep
 end
 
-local function FindDashboardParent()
+function UI.FindDashboardParent()
     local pg = LocalPlayer and (LocalPlayer:FindFirstChild("PlayerGui") or LocalPlayer:WaitForChild("PlayerGui", 5))
     local okCg, cg = pcall(function()
         return (cloneref and cloneref(game:GetService("CoreGui"))) or game:GetService("CoreGui")
     end)
     if pg then
         DestroyExistingKaitunGui(pg)
-        if okCg and cg then
-            DestroyExistingKaitunGui(cg)
-        end
+        if okCg and cg then DestroyExistingKaitunGui(cg) end
         return pg
     end
     if okCg and cg then
@@ -7951,15 +7403,11 @@ local function FindDashboardParent()
 end
 
 local function InitKaitunDashboard()
-    if Config.ShowKaitunUI == false then
-        return
-    end
+    if Config.ShowKaitunUI == false then return end
 
     local okInit, initErr = pcall(function()
-        local parent = FindDashboardParent()
-        if not parent or not IsRunning() then
-            return
-        end
+        local parent = UI.FindDashboardParent()
+        if not parent or not IsRunning() then return end
 
         local C_GOLD   = Color3.fromRGB(255, 170, 0)
         local C_DIM    = Color3.fromRGB(200, 205, 220)
@@ -7998,8 +7446,9 @@ local function InitKaitunDashboard()
         container.ZIndex = 1000
         container.Parent = sg
 
-        local function MkText(parentObj, text, size, color, bold, yPos, h)
+        local function MkText(name, parentObj, text, size, color, bold, yPos, h)
             local l = Instance.new("TextLabel")
+            l.Name = name
             l.Size = UDim2.new(1, 0, 0, h or (size + 6))
             l.Position = UDim2.new(0, 0, 0, yPos)
             l.BackgroundTransparency = 1
@@ -8026,26 +7475,17 @@ local function InitKaitunDashboard()
             return s
         end
 
-        local lblName      = MkText(container, LocalPlayer and LocalPlayer.Name or "Player", 44, C_GOLD, true, 10, 50)
+        MkText("lblName", container, LocalPlayer and LocalPlayer.Name or "Player", 44, C_GOLD, true, 10, 50)
         MkSep(container, 75)
-        local lblTime      = MkText(container, "Session Time: 00:00:00", 24, C_WHITE, true, 90, 32)
-        local lblCoins     = MkText(container, "Patch Coins: 0  |  Tokens: 0", 22, C_GOLD, true, 130, 32)
-        local lblGifts     = MkText(container, "Flannel Gifts: 0 (Bag: 0)  |  Island Luck: +0%", 22, C_GREEN, true, 170, 30)
-        local lblEggsCraft = MkText(container, "Eggs: 0 (None)  |  Craft: G 0 / R 0", 18, C_DIM, false, 208, 28)
-        local lblTycoon    = MkText(container, "Tycoon: 0/0 (Wait)  |  Keep: Off (Lock 0/0)", 18, C_DIM, false, 240, 28)
-        local lblBoosts    = MkText(container, "Boosts: Coin Off | Dmg Off | Luck Off", 17, C_PURPLE, false, 272, 27)
-        local lblStatus    = MkText(container, "Status: Initializing  |  Target: None", 18, C_DIM, false, 332, 28)
+        local lblTime      = MkText("lblTime", container, "Session Time: 00:00:00", 24, C_WHITE, true, 90, 32)
+        local lblCoins     = MkText("lblCoins", container, "Patch Coins: 0  |  Tokens: 0", 22, C_GOLD, true, 130, 32)
+        local lblGifts     = MkText("lblGifts", container, "Flannel Gifts: 0 (Bag: 0)  |  Island Luck: +0%", 22, C_GREEN, true, 170, 30)
+        local lblEggsCraft = MkText("lblEggsCraft", container, "Eggs: 0 (None)  |  Craft: G 0 / R 0", 18, C_DIM, false, 208, 28)
+        local lblTycoon    = MkText("lblTycoon", container, "Tycoon: 0/0 (Wait)  |  Keep: Off (Lock 0/0)", 18, C_DIM, false, 240, 28)
+        local lblBoosts    = MkText("lblBoosts", container, "Boosts: Coin Off | Dmg Off | Luck Off", 17, C_PURPLE, false, 272, 27)
+        local lblStatus    = MkText("lblStatus", container, "Status: Initializing  |  Target: None", 18, C_DIM, false, 332, 28)
         MkSep(container, 370)
-        local lblRunning   = MkText(container, "Running: Pumpkin Patch Tycoon", 22, C_WHITE, true, 385, 34)
-        lblName.Name = "lblName"
-        lblTime.Name = "lblTime"
-        lblCoins.Name = "lblCoins"
-        lblGifts.Name = "lblGifts"
-        lblEggsCraft.Name = "lblEggsCraft"
-        lblTycoon.Name = "lblTycoon"
-        lblBoosts.Name = "lblBoosts"
-        lblStatus.Name = "lblStatus"
-        lblRunning.Name = "lblRunning"
+        MkText("lblRunning", container, "Running: Pumpkin Patch Tycoon", 22, C_WHITE, true, 385, 34)
 
         local toggleBtn = Instance.new("TextButton")
         toggleBtn.Name = "ToggleBtn"
@@ -8087,7 +7527,7 @@ local function InitKaitunDashboard()
 
         local function RefreshLabels()
             local elapsed = os.time() - (tonumber(Runtime.Stats.StartTime) or os.time())
-            SetTextIfChanged(lblTime, "Session Time: " .. FormatTime(elapsed))
+            SetTextIfChanged(lblTime, "Session Time: " .. UI.FormatTime(elapsed))
 
             local coins = GetCurrency((PT and PT.COIN) or "PumpkinTycoonCoins")
             local tokens = GetCurrency((PT and PT.TOKENS) or "PumpkinTokens")
@@ -8095,55 +7535,45 @@ local function InitKaitunDashboard()
             Runtime.Stats.Tokens = tokens
             local cps = Runtime.Helpers.UpdateCoinRateSampler(coins)
             SetTextIfChanged(lblCoins, string.format("Patch Coins: %s (+%s/s)  |  Tokens: %s",
-                FormatCompactNumber(coins),
-                FormatCompactNumber(cps),
-                FormatCompactNumber(tokens)))
+                UI.FormatCompactNumber(coins),
+                UI.FormatCompactNumber(cps),
+                UI.FormatCompactNumber(tokens)))
 
             local openedGifts = tonumber(Runtime.Stats.GiftsOpened) or 0
-            local bagGifts = GetFlannelGiftBagCount()
+            local _, _, _, bagGifts = Runtime.Helpers.ScanFlannelGiftBag()
             local luckAttr = (Modules.PumpkinEarnUtil and Modules.PumpkinEarnUtil.ATTR_ISLAND_LUCK) or "PumpkinTycoonIslandLuck"
             local rawLuck = tonumber(LocalPlayer and LocalPlayer:GetAttribute(luckAttr))
             local luckVal = (type(rawLuck) == "number" and rawLuck == rawLuck and rawLuck < math.huge)
                 and math.max(0, rawLuck)
                 or (tonumber(Runtime.Stats.IslandLuck) or 0)
             Runtime.Stats.IslandLuck = luckVal
-            local isP2Stats = (tonumber(Runtime.Stats.ButtonsTotal) or 0) > 68
-            if isP2Stats then
-                local nCnt = Runtime.Helpers.GetNetCount("Pet Net")
-                local uCnt = Runtime.Helpers.GetNetCount("Ultra Pet Net")
-                local wildCaught = tonumber(Runtime.Stats.WildCaught) or 0
-                local wildHuges = tonumber(Runtime.Stats.WildHugesCaught) or 0
+            if (tonumber(Runtime.Stats.ButtonsTotal) or 0) > 68 then
                 SetTextIfChanged(lblGifts, string.format("Gifts: %s (Bag: %s)  |  Luck: %s  |  Nets: %d/%d  |  Hunt: %d (Huge: %d)",
-                    FormatCompactNumber(openedGifts),
-                    FormatCompactNumber(bagGifts),
-                    FormatIslandLuck(luckVal),
-                    nCnt,
-                    uCnt,
-                    wildCaught,
-                    wildHuges))
+                    UI.FormatCompactNumber(openedGifts),
+                    UI.FormatCompactNumber(bagGifts),
+                    UI.FormatIslandLuck(luckVal),
+                    Runtime.Helpers.GetNetCount("Pet Net"),
+                    Runtime.Helpers.GetNetCount("Ultra Pet Net"),
+                    tonumber(Runtime.Stats.WildCaught) or 0,
+                    tonumber(Runtime.Stats.WildHugesCaught) or 0))
             else
                 SetTextIfChanged(lblGifts, string.format("Flannel Gifts: %s (Bag: %s)  |  Island Luck: %s",
-                    FormatCompactNumber(openedGifts),
-                    FormatCompactNumber(bagGifts),
-                    FormatIslandLuck(luckVal)))
+                    UI.FormatCompactNumber(openedGifts),
+                    UI.FormatCompactNumber(bagGifts),
+                    UI.FormatIslandLuck(luckVal)))
             end
 
-            local eggsHatched = tonumber(Runtime.Stats.EggsHatched) or 0
             local targetEggLabel = (Config.AutoHatch == false) and "Off" or tostring(Config.TargetEggName or "None")
-            if targetEggLabel == "" then
-                targetEggLabel = "None"
-            end
-            local goldCrafted = tonumber(Runtime.Stats.GoldCrafted) or 0
-            local rainbowCrafted = tonumber(Runtime.Stats.RainbowCrafted) or 0
+            if targetEggLabel == "" then targetEggLabel = "None" end
             local shinyCrafted = tonumber(Runtime.Stats.ShinyCrafted) or 0
             local craftText = string.format("G %s / R %s",
-                FormatCompactNumber(goldCrafted),
-                FormatCompactNumber(rainbowCrafted))
+                UI.FormatCompactNumber(tonumber(Runtime.Stats.GoldCrafted) or 0),
+                UI.FormatCompactNumber(tonumber(Runtime.Stats.RainbowCrafted) or 0))
             if shinyCrafted > 0 then
-                craftText = craftText .. " / S " .. FormatCompactNumber(shinyCrafted)
+                craftText = craftText .. " / S " .. UI.FormatCompactNumber(shinyCrafted)
             end
             SetTextIfChanged(lblEggsCraft, string.format("Eggs: %s (%s)  |  Craft: %s",
-                FormatCompactNumber(eggsHatched),
+                UI.FormatCompactNumber(tonumber(Runtime.Stats.EggsHatched) or 0),
                 targetEggLabel,
                 craftText))
 
@@ -8154,11 +7584,10 @@ local function InitKaitunDashboard()
             end
             local done = tonumber(Runtime.Stats.ButtonsDone) or 0
             local total = tonumber(Runtime.Stats.ButtonsTotal) or 0
-            local tycoonDone = Runtime.Stats.TycoonComplete == true
             local tycoonStatus
             if total <= 0 then
                 tycoonStatus = inEvent and "Loading" or "Wait"
-            elseif tycoonDone then
+            elseif Runtime.Stats.TycoonComplete == true then
                 tycoonStatus = Runtime.Stats.CompletedClaimed and "Done" or "Claim"
             else
                 tycoonStatus = string.format("%d%%", math.clamp(math.floor((done / total) * 100 + 0.5), 0, 99))
@@ -8166,31 +7595,29 @@ local function InitKaitunDashboard()
             local curReb = tonumber(Runtime.Stats.Rebirths) or 0
             local tgtReb = math.floor(tonumber(Config.TargetRebirths) or 0)
             local rebLabel = (tgtReb > 0) and string.format("%d/%d", curReb, tgtReb) or tostring(curReb)
-            local lockedPed, maxKeepPed, effKeepRung = ReadPedestalLockCounts(plot)
-            local keepLabel = FormatKeepLabel(effKeepRung ~= nil and effKeepRung or Config.KeepRung)
+            local lockedPed, maxKeepPed, effKeepRung = UI.ReadPedestalLockCounts(plot)
             SetTextIfChanged(lblTycoon, string.format("Tycoon: %d/%d (%s)  |  Reb: %s  |  Keep: %s (Lock %d/%d)",
-                done, total, tycoonStatus, rebLabel, keepLabel, lockedPed, maxKeepPed))
+                done, total, tycoonStatus, rebLabel,
+                UI.FormatKeepLabel(effKeepRung ~= nil and effKeepRung or Config.KeepRung),
+                lockedPed, maxKeepPed))
 
-            local coinSec = GetAxisBoostSeconds("Coins")
-            local dmgSec = GetAxisBoostSeconds("Damage")
-            local luckSec = GetAxisBoostSeconds("IslandLuck")
-            local appleCnt = Runtime.Helpers.GetActiveFruitCount("Apple")
             SetTextIfChanged(lblBoosts, string.format("Boosts: Coin %s | Dmg %s | Luck %s | Apple %dx",
-                FormatShortTimer(coinSec),
-                FormatShortTimer(dmgSec),
-                FormatShortTimer(luckSec),
-                appleCnt))
+                UI.FormatShortTimer(Runtime.Helpers.GetAxisBoostSeconds("Coins")),
+                UI.FormatShortTimer(Runtime.Helpers.GetAxisBoostSeconds("Damage")),
+                UI.FormatShortTimer(Runtime.Helpers.GetAxisBoostSeconds("IslandLuck")),
+                Runtime.Helpers.GetActiveFruitCount("Apple")))
 
-            local phase = tostring(Runtime.Stats.Phase or "Initializing")
             local targetDesc = tostring(Runtime.Stats.ActiveTargetDesc or "None")
             if Runtime.Stats.FightingTurkeyBoss then
                 local bossHp = tonumber(Runtime.Stats.TurkeyBossHealth) or 0
-                local sharePct = (tonumber(Runtime.Stats.TurkeyBossShare) or 0) * 100
                 if bossHp > 0 then
-                    targetDesc = string.format("TurkeyBoss (HP %s | %.1f%%)", FormatCompactNumber(bossHp), sharePct)
+                    targetDesc = string.format("TurkeyBoss (HP %s | %.1f%%)",
+                        UI.FormatCompactNumber(bossHp),
+                        (tonumber(Runtime.Stats.TurkeyBossShare) or 0) * 100)
                 end
             end
-            SetTextIfChanged(lblStatus, string.format("Status: %s  |  Target: %s", phase, targetDesc))
+            SetTextIfChanged(lblStatus, string.format("Status: %s  |  Target: %s",
+                tostring(Runtime.Stats.Phase or "Initializing"), targetDesc))
         end
 
         pcall(RefreshLabels)
@@ -8199,9 +7626,7 @@ local function InitKaitunDashboard()
         task.spawn(function()
             while IsRunning() and sg and sg.Parent and Runtime.Cache.KaitunUiToken == uiToken do
                 task.wait(Config.UltraLowRAM and 1.0 or 0.5)
-                if not (IsRunning() and sg and sg.Parent and Runtime.Cache.KaitunUiToken == uiToken) then
-                    break
-                end
+                if not (IsRunning() and sg and sg.Parent and Runtime.Cache.KaitunUiToken == uiToken) then break end
                 local uOk, uErr = pcall(RefreshLabels)
                 if not uOk then
                     local now = os.clock()
@@ -8227,21 +7652,10 @@ end
 -- ============================================================================
 Runtime.Webhook = Runtime.Webhook or {}
 
-function Runtime.Webhook.Trim(str)
-    if type(str) ~= "string" then
-        return ""
-    end
-    return str:match("^%s*(.-)%s*$") or ""
-end
-
 function Runtime.Webhook.NormalizeUrl(raw)
-    local cleaned = Runtime.Webhook.Trim(raw)
-    if cleaned == "" then
-        return nil, "empty"
-    end
-    -- Strip trailing query string (e.g. ?wait=true) before appending ?wait=true cleanly on POST
-    local base = cleaned:match("^(.-)%?.*$") or cleaned
-    base = base:gsub("/+$", "")
+    local cleaned = type(raw) == "string" and (raw:match("^%s*(.-)%s*$") or "") or ""
+    if cleaned == "" then return nil, "empty" end
+    local base = (cleaned:match("^(.-)%?.*$") or cleaned):gsub("/+$", "")
     if base:match("^https://[%w%-]+%.discord%.com/api/webhooks/%d+/[%w%-_]+$")
         or base:match("^https://discord%.com/api/webhooks/%d+/[%w%-_]+$")
         or base:match("^https://discordapp%.com/api/webhooks/%d+/[%w%-_]+$")
@@ -8252,53 +7666,17 @@ function Runtime.Webhook.NormalizeUrl(raw)
 end
 
 function Runtime.Webhook.GetHttpSender()
-    if type(request) == "function" then
-        return request
-    end
-    if type(http_request) == "function" then
-        return http_request
-    end
-    if type(syn) == "table" and type(syn.request) == "function" then
-        return syn.request
-    end
-    if type(http) == "table" and type(http.request) == "function" then
-        return http.request
-    end
-    return nil
-end
-
-function Runtime.Webhook.FormatCount(value)
-    if type(value) ~= "number" or value ~= value or value == math.huge or value == -math.huge then
-        return "No data"
-    end
-    local digits = string.format("%.0f", value)
-    return (digits:reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", ""))
-end
-
-function Runtime.Webhook.ClassifyPet(item)
-    if not item then
-        return nil
-    end
-    if type(item.IsGargantuan) == "function" and item:IsGargantuan() then
-        return "Gargantuan"
-    end
-    if type(item.IsTitanic) == "function" and item:IsTitanic() then
-        return "Titanic"
-    end
-    if type(item.IsHuge) == "function" and item:IsHuge() then
-        return "Huge"
-    end
+    if type(request) == "function" then return request end
+    if type(http_request) == "function" then return http_request end
+    if type(syn) == "table" and type(syn.request) == "function" then return syn.request end
+    if type(http) == "table" and type(http.request) == "function" then return http.request end
     return nil
 end
 
 function Runtime.Helpers.EnsureItemsUpdateHook()
-    if Runtime.Cache.ItemsUpdateConnBound then
-        return
-    end
+    if Runtime.Cache.ItemsUpdateConnBound then return end
     local net = Modules.Network
-    if not net or type(net.Fired) ~= "function" then
-        return
-    end
+    if not net or type(net.Fired) ~= "function" then return end
     local okSig, sig = pcall(net.Fired, "Items: Update")
     if okSig and sig and type(sig.Connect) == "function" then
         Runtime.Cache.ItemsUpdateConnBound = true
@@ -8306,53 +7684,27 @@ function Runtime.Helpers.EnsureItemsUpdateHook()
             if plr == nil or plr == LocalPlayer then
                 Runtime.Cache.WebhookInvDirty = true
                 Runtime.Cache.GiftBagDirty = true
+                Runtime.Cache.MailInvDirty = true
                 Runtime.Cache.TeamPowerSnapshotAt = 0
             end
         end)
     end
 end
 
-function Runtime.Webhook.EnsureModules()
-    if not Modules.InventoryCmds then
-        Modules.InventoryCmds = SafeRequire(Library, "Client", "InventoryCmds")
-    end
-    if not Modules.Directory then
-        Modules.Directory = SafeRequire(Library, "Directory")
-    end
-    if not Modules.PetItem then
-        Modules.PetItem = SafeRequire(Library, "Items", "PetItem")
-    end
-    if not Modules.GlobalExistCmds then
-        Modules.GlobalExistCmds = SafeRequire(Library, "Client", "GlobalExistCmds")
-    end
-    if not Modules.RAPCmds then
-        Modules.RAPCmds = SafeRequire(Library, "Client", "RAPCmds")
-    end
-    return Modules.Save and Modules.InventoryCmds and Modules.Directory
-end
-
 function Runtime.Webhook.ReadSnapshot(forceRefresh)
-    if not Runtime.Webhook.EnsureModules() then
-        return nil, nil
-    end
-    local okSave, data = pcall(Modules.Save.Get)
-    if not okSave or type(data) ~= "table" or type(data.Inventory) ~= "table" then
-        return nil, nil
-    end
-    local invPets = data.Inventory.Pet
-    if type(invPets) ~= "table" then
-        return nil, nil
-    end
+    if not (Modules.Save and Modules.InventoryCmds and Modules.Directory) then return nil, nil end
+    local invPets = Runtime.Helpers.GetSaveInventory("Pet")
+    if not invPets then return nil, nil end
     local okCont, container = pcall(Modules.InventoryCmds.Container)
-    if not okCont or not container then
-        return nil, nil
-    end
+    if not okCont or not container then return nil, nil end
 
     local now = os.clock()
     local activitySig = tostring(Runtime.Stats.EggsHatched or 0)
         .. "|" .. tostring(Runtime.Stats.GoldCrafted or 0)
         .. "|" .. tostring(Runtime.Stats.RainbowCrafted or 0)
         .. "|" .. tostring(Runtime.Stats.GiftsOpened or 0)
+        .. "|" .. tostring(Runtime.Stats.WildCaught or 0)
+        .. "|" .. tostring(Runtime.Stats.SightingsCaught or 0)
     if Runtime.Cache.WebhookLastActivitySig ~= activitySig then
         Runtime.Cache.WebhookLastActivitySig = activitySig
         Runtime.Cache.WebhookInvDirty = true
@@ -8368,41 +7720,19 @@ function Runtime.Webhook.ReadSnapshot(forceRefresh)
         return Runtime.Cache.WebhookLastSnapshot, container
     end
 
-    local petsDir = Modules.Directory and Modules.Directory.Pets
+    local petsDir = Modules.Directory.Pets
     local snapshot = {}
     for _, itemData in pairs(invPets) do
         if type(itemData) == "table" and type(itemData.id) == "string" then
             local pd = SafeDirLookup(petsDir, itemData.id)
-            local category = nil
-            if pd then
-                if pd.gargantuan == true then
-                    category = "Gargantuan"
-                elseif pd.titanic == true then
-                    category = "Titanic"
-                elseif pd.huge == true then
-                    category = "Huge"
-                end
-            elseif string.sub(itemData.id, 1, 11) == "Gargantuan " then
-                category = "Gargantuan"
-            elseif string.sub(itemData.id, 1, 8) == "Titanic " then
-                category = "Titanic"
-            elseif string.sub(itemData.id, 1, 5) == "Huge " then
-                category = "Huge"
-            end
-
+            local category = Runtime.Helpers.GetChaseCategory(itemData.id, pd)
             if category then
                 local petType = tonumber(itemData.pt) or 0
                 local shiny = (itemData.sh == true)
                 local key = itemData.id .. ":" .. tostring(petType) .. ":" .. tostring(shiny)
                 local record = snapshot[key]
                 if not record then
-                    record = {
-                        id = itemData.id,
-                        petType = petType,
-                        shiny = shiny,
-                        category = category,
-                        amount = 0,
-                    }
+                    record = { id = itemData.id, petType = petType, shiny = shiny, category = category, amount = 0 }
                     snapshot[key] = record
                 end
                 record.amount = record.amount + math.max(1, math.floor(tonumber(itemData._am) or 1))
@@ -8420,22 +7750,16 @@ end
 
 function Runtime.Webhook.ResolveThumbnail(icon)
     local assetId = type(icon) == "string" and icon:match("(%d+)$") or nil
-    if not assetId then
-        return nil
-    end
+    if not assetId then return nil end
     local cached = Runtime.Cache.WebhookThumbnails[assetId]
-    if cached then
-        return cached
-    end
+    if cached then return cached end
     local ok, imageUrl = pcall(function()
         local raw = game:HttpGet(
             "https://thumbnails.roblox.com/v1/assets?assetIds=" .. assetId .. "&size=150x150&format=Png&isCircular=false"
         )
         local decoded = HttpService:JSONDecode(raw)
         local row = decoded and decoded.data and decoded.data[1]
-        if row and row.state == "Completed" and type(row.imageUrl) == "string" and row.imageUrl:match("^https://") then
-            return row.imageUrl
-        end
+        if row and row.state == "Completed" and type(row.imageUrl) == "string" and row.imageUrl:match("^https://") then return row.imageUrl end
         return nil
     end)
     if ok and imageUrl then
@@ -8451,10 +7775,8 @@ local WEBHOOK_CATEGORY_COLOR = {
     Gargantuan = 11731199,
 }
 
-function Runtime.Webhook.BuildDropPayload(record, gained, isTest)
-    local petType = tonumber(record.petType) or 0
-    local shiny = (record.shiny == true)
-    local item = Modules.PetItem(record.id):SetType(petType):SetShiny(shiny)
+function Runtime.Webhook.BuildDropPayload(record, gained)
+    local item = Modules.PetItem(record.id):SetType(tonumber(record.petType) or 0):SetShiny(record.shiny == true)
     local petName = tostring(item:GetName() or record.id)
     local okEx, existVal = false, nil
     if Modules.GlobalExistCmds and type(Modules.GlobalExistCmds.Get) == "function" then
@@ -8465,56 +7787,28 @@ function Runtime.Webhook.BuildDropPayload(record, gained, isTest)
         okRap, rapVal = pcall(Modules.RAPCmds.Get, item)
     end
 
-    local amountLine = (type(gained) == "number" and gained > 1)
-        and string.format("**Amount: +%d**\n", gained)
-        or ""
-    local playerName = LocalPlayer and LocalPlayer.Name or "Unknown"
+    local amountLine = (type(gained) == "number" and gained > 1) and string.format("**Amount: +%d**\n", gained) or ""
     local embed = {
-        title = (isTest and "[TEST] " or "") .. string.upper(tostring(record.category)) .. " DROP",
+        title = string.upper(tostring(record.category)) .. " DROP",
         description = string.format(
             "**Name Pet: %s**\n%s**Exist: %s**\n**Rap: %s**\n**Account:**\n||%s||",
             petName,
             amountLine,
-            Runtime.Webhook.FormatCount(okEx and existVal or nil),
-            Runtime.Webhook.FormatCount(okRap and rapVal or nil),
-            playerName
+            Runtime.Helpers.FormatCommas(okEx and existVal or nil, "No data"),
+            Runtime.Helpers.FormatCommas(okRap and rapVal or nil, "No data"),
+            LocalPlayer and LocalPlayer.Name or "Unknown"
         ),
         color = WEBHOOK_CATEGORY_COLOR[record.category] or 16769288,
         timestamp = DateTime.now():ToIsoDate(),
     }
     local thumbUrl = Runtime.Webhook.ResolveThumbnail(item:GetIcon())
-    if thumbUrl then
-        embed.thumbnail = { url = thumbUrl }
-    end
-    return {
-        embeds = { embed },
-        allowed_mentions = { parse = {} },
-    }
-end
-
-function Runtime.Webhook.BuildEmptyTestPayload()
-    local playerName = LocalPlayer and LocalPlayer.Name or "Unknown"
-    return {
-        embeds = {
-            {
-                title = "[TEST] WEBHOOK CONNECTED",
-                description = string.format(
-                    "**Status: Active**\n**Note: No Huge/Titanic/Gargantuan pet found in inventory for sample preview.**\n**Account:**\n||%s||",
-                    playerName
-                ),
-                color = 16769288,
-                timestamp = DateTime.now():ToIsoDate(),
-            },
-        },
-        allowed_mentions = { parse = {} },
-    }
+    if thumbUrl then embed.thumbnail = { url = thumbUrl } end
+    return { embeds = { embed }, allowed_mentions = { parse = {} } }
 end
 
 function Runtime.Webhook.PostJson(url, payload)
     local sender = Runtime.Webhook.GetHttpSender()
-    if type(sender) ~= "function" then
-        return false, "Executor does not support HTTP requests"
-    end
+    if type(sender) ~= "function" then return false, "Executor does not support HTTP requests" end
     local encoded = HttpService:JSONEncode(payload)
     for attempt = 1, 2 do
         local ok, result = pcall(function()
@@ -8525,21 +7819,15 @@ function Runtime.Webhook.PostJson(url, payload)
                 Body = encoded,
             })
         end)
-        if not ok or type(result) ~= "table" then
-            return false, "HTTP request failed"
-        end
+        if not ok or type(result) ~= "table" then return false, "HTTP request failed" end
         local status = tonumber(result.StatusCode)
-        if status and status >= 200 and status < 300 then
-            return true, nil
-        end
+        if status and status >= 200 and status < 300 then return true, nil end
         if status == 429 and attempt == 1 then
             local retrySec = 2
             pcall(function()
                 local body = type(result.Body) == "string" and HttpService:JSONDecode(result.Body) or nil
                 local ra = type(body) == "table" and tonumber(body.retry_after) or nil
-                if ra and ra > 0 and ra <= 10 then
-                    retrySec = ra + 0.1
-                end
+                if ra and ra > 0 and ra <= 10 then retrySec = ra + 0.1 end
             end)
             task.wait(retrySec)
         else
@@ -8547,33 +7835,6 @@ function Runtime.Webhook.PostJson(url, payload)
         end
     end
     return false, "Discord HTTP 429"
-end
-
-function Runtime.Webhook.PostDrop(url, record, gained, isTest)
-    local payload = Runtime.Webhook.BuildDropPayload(record, gained, isTest)
-    return Runtime.Webhook.PostJson(url, payload)
-end
-
-function Runtime.Webhook.Test()
-    local url, urlErr = Runtime.Webhook.NormalizeUrl(Config.WebhookUrl)
-    if not url then
-        return false, urlErr == "empty" and "WebhookUrl is empty" or "Invalid Discord webhook URL"
-    end
-    local snapshot = Runtime.Webhook.ReadSnapshot(true)
-    if not snapshot then
-        return false, "Pet inventory is not loaded yet"
-    end
-    local categories = type(Config.WebhookCategories) == "table" and Config.WebhookCategories or {}
-    local firstKey, firstPet = nil, nil
-    for key, record in pairs(snapshot) do
-        if categories[record.category] ~= false and record.amount > 0 and (not firstKey or key < firstKey) then
-            firstKey, firstPet = key, record
-        end
-    end
-    if firstPet then
-        return Runtime.Webhook.PostDrop(url, firstPet, 1, true)
-    end
-    return Runtime.Webhook.PostJson(url, Runtime.Webhook.BuildEmptyTestPayload())
 end
 
 function Runtime.Webhook.ResolveTargets()
@@ -8616,18 +7877,6 @@ function Runtime.Webhook.RunLoop()
                 Runtime.Cache.WebhookWarnedState = nil
             end
 
-            if userUrl and Config.WebhookSendTestOnStart and not Runtime.Cache.WebhookStartupTestDone then
-                Runtime.Cache.WebhookStartupTestDone = true
-                task.spawn(function()
-                    local tOk, tErr = Runtime.Webhook.Test()
-                    if tOk then
-                        Log("INFO", "Startup webhook test delivered.")
-                    else
-                        Log("DEBUG", "Startup webhook test failed: %s", tostring(tErr))
-                    end
-                end)
-            end
-
             local current, container = Runtime.Webhook.ReadSnapshot(false)
             if current then
                 if current ~= previous or container ~= previousContainer then
@@ -8636,8 +7885,7 @@ function Runtime.Webhook.RunLoop()
                     if baseline then
                         local categories = type(Config.WebhookCategories) == "table" and Config.WebhookCategories or {}
                         for key, record in pairs(current) do
-                            local oldAmount = baseline[key] and baseline[key].amount or 0
-                            local gained = record.amount - oldAmount
+                            local gained = record.amount - (baseline[key] and baseline[key].amount or 0)
                             if gained > 0 then
                                 local sendGlobal = globalUrl ~= nil
                                 local sendUser = userUrl ~= nil and categories[record.category] ~= false
@@ -8650,22 +7898,14 @@ function Runtime.Webhook.RunLoop()
                                         amount = record.amount,
                                     }
                                     task.spawn(function()
-                                        if not IsRunning() then
-                                            return
-                                        end
-                                        local payload = Runtime.Webhook.BuildDropPayload(dropCopy, gained, false)
+                                        if not IsRunning() then return end
+                                        local payload = Runtime.Webhook.BuildDropPayload(dropCopy, gained)
                                         local targets = {}
-                                        if sendGlobal then
-                                            table.insert(targets, { tag = "global", url = globalUrl })
-                                        end
-                                        if sendUser and userUrl ~= globalUrl then
-                                            table.insert(targets, { tag = "user", url = userUrl })
-                                        end
+                                        if sendGlobal then table.insert(targets, { tag = "global", url = globalUrl }) end
+                                        if sendUser and userUrl ~= globalUrl then table.insert(targets, { tag = "user", url = userUrl }) end
                                         for _, target in ipairs(targets) do
                                             task.spawn(function()
-                                                if not IsRunning() then
-                                                    return
-                                                end
+                                                if not IsRunning() then return end
                                                 local okPost, reason = Runtime.Webhook.PostJson(target.url, payload)
                                                 if okPost then
                                                     Runtime.Stats.WebhookSent = (Runtime.Stats.WebhookSent or 0) + 1
@@ -8691,13 +7931,664 @@ function Runtime.Webhook.RunLoop()
 end
 
 -- ============================================================================
+-- 12D. AUTO MAIL MANAGER (SEND ONLY - WHITELIST + LIVE FEE + TRADABLE GUARD)
+-- ============================================================================
+Runtime.Mail = Runtime.Mail or {}
+
+function Runtime.Mail.GetDiamonds()
+    if Modules.CurrencyCmds and type(Modules.CurrencyCmds.Get) == "function" then
+        local ok, amt = pcall(Modules.CurrencyCmds.Get, "Diamonds")
+        if ok and type(amt) == "number" then
+            return math.max(0, math.floor(amt))
+        end
+    end
+    local invCurrency = Runtime.Helpers.GetSaveInventory("Currency")
+    if type(invCurrency) == "table" then
+        for _, v in pairs(invCurrency) do
+            if type(v) == "table" and v.id == "Diamonds" then
+                return math.max(0, math.floor(tonumber(v._am) or 0))
+            end
+        end
+    end
+    return 0
+end
+
+function Runtime.Mail.ComputeSendCost()
+    local feeMult = 1
+    if Modules.FFlags and type(Modules.FFlags.Get) == "function" and type(Modules.FFlags.Keys) == "table" then
+        local key = Modules.FFlags.Keys.DiamondSink_MailboxFee_Mult
+        if key ~= nil then
+            local okM, val = pcall(Modules.FFlags.Get, key)
+            if okM and type(val) == "number" and val > 0 then
+                feeMult = val
+            end
+        end
+    end
+    local baseCost = math.floor(((Modules.BalancingConstants and tonumber(Modules.BalancingConstants.MailboxDiamondCost)) or 20000) * feeMult)
+    local save = Runtime.Helpers.GetSaveData()
+    if not save then return baseCost end
+
+    if (type(save.Gamepasses) == "table" and save.Gamepasses.VIP == true)
+        or (LocalPlayer and LocalPlayer:GetAttribute("Partner") == true)
+    then
+        return baseCost
+    end
+
+    local now = Workspace:GetServerTimeNow()
+    local resetTime = tonumber(save.MailboxResetTime)
+    if not resetTime or resetTime < now then
+        return baseCost
+    end
+
+    local sends = math.max(0, math.floor(tonumber(save.MailboxSendsSinceReset) or 0))
+    local growth = (Modules.MailboxTypes and tonumber(Modules.MailboxTypes.DiamondCostGrowthRate)) or 1.5
+    local cap = math.floor(((Modules.MailboxTypes and tonumber(Modules.MailboxTypes.DiamondCostCap)) or 5000000) * feeMult)
+    return math.min(math.floor(baseCost * (growth ^ sends)), cap)
+end
+
+function Runtime.Mail.ParseAmount(raw)
+    if raw == math.huge or raw == true then return math.huge end
+    if type(raw) == "string" then
+        local lowered = raw:lower():gsub("%s+", "")
+        if lowered == "max" or lowered == "all" or lowered == "inf" then
+            return math.huge
+        end
+        local n = tonumber(lowered)
+        return (n and n > 0) and math.floor(n) or 0
+    end
+    if type(raw) == "number" and raw > 0 then
+        return (raw == math.huge) and math.huge or math.floor(raw)
+    end
+    return 0
+end
+
+function Runtime.Mail.ExtractRuleSpec(rawVal)
+    local specifiedClass = nil
+    local rawAmount = rawVal
+    local minAmount = 1
+    local keepAmount = 0
+    if type(rawVal) == "table" then
+        specifiedClass = rawVal.Class or rawVal.class or rawVal.Category or rawVal.category
+        rawAmount = rawVal.Amount or rawVal.amount or rawVal.Count or rawVal.count or rawVal[1]
+        if rawAmount == nil then rawAmount = math.huge end
+        minAmount = math.max(1, math.floor(tonumber(rawVal.MinAmount or rawVal.minAmount) or 1))
+        keepAmount = math.max(0, math.floor(tonumber(rawVal.Keep or rawVal.keep) or 0))
+    end
+    local amount = Runtime.Mail.ParseAmount(rawAmount)
+    return {
+        class = type(specifiedClass) == "string" and specifiedClass ~= "" and specifiedClass or nil,
+        amount = amount,
+        minAmount = minAmount,
+        keep = keepAmount,
+    }
+end
+
+function Runtime.Mail.GetRecipients()
+    local list = {}
+    local seen = {}
+    local selfLower = LocalPlayer and LocalPlayer.Name and LocalPlayer.Name:lower() or ""
+
+    local function pushName(raw)
+        if type(raw) ~= "string" then return end
+        local cleaned = raw:gsub("^@", ""):gsub("%s+", "")
+        local lower = cleaned:lower()
+        if cleaned ~= "" and lower ~= selfLower and not seen[lower] then
+            seen[lower] = true
+            table.insert(list, cleaned)
+        end
+    end
+
+    local rawUsers = Config.MailUsernames
+    if type(rawUsers) == "table" then
+        for _, u in ipairs(rawUsers) do
+            pushName(u)
+        end
+    elseif type(rawUsers) == "string" then
+        pushName(rawUsers)
+    end
+    return list
+end
+
+function Runtime.Mail.PickRecipient(recipients)
+    if #recipients == 0 then return nil end
+    local now = os.clock()
+    local cooldowns = Runtime.Cache.MailFailCooldownByKey
+    local startIdx = 1
+    if Config.MailRoundRobin == true then
+        startIdx = ((Runtime.Cache.MailRecipientIdx or 0) % #recipients) + 1
+    end
+    for offset = 0, #recipients - 1 do
+        local idx = ((startIdx - 1 + offset) % #recipients) + 1
+        local name = recipients[idx]
+        local untilAt = cooldowns["user:" .. name:lower()] or 0
+        if now >= untilAt then
+            if Config.MailRoundRobin == true then
+                Runtime.Cache.MailRecipientIdx = idx
+            end
+            return name
+        end
+    end
+    return nil
+end
+
+function Runtime.Mail.GetProtectedPetSets()
+    local daycareUids = {}
+    Craft.CollectDaycareUIDs(Modules.DaycareCmds, daycareUids)
+    Craft.CollectDaycareUIDs(Modules.ExclusiveDaycareCmds, daycareUids)
+
+    local equippedCounts = {}
+    if Config.MailSkipEquippedPets ~= false and Modules.PetCmds and type(Modules.PetCmds.GetEquipped) == "function" then
+        local okEq, equipped = pcall(Modules.PetCmds.GetEquipped)
+        if okEq and type(equipped) == "table" then
+            for _, eq in pairs(equipped) do
+                local stackUid = type(eq) == "table" and (eq.uid or eq._uid) or (type(eq) == "string" and eq or nil)
+                if type(stackUid) == "string" and stackUid ~= "" then
+                    equippedCounts[stackUid] = (equippedCounts[stackUid] or 0) + 1
+                end
+            end
+        end
+    end
+    return daycareUids, equippedCounts
+end
+
+function Runtime.Mail.InspectItem(categoryName, uid, itemData)
+    if type(itemData) ~= "table" then
+        return false, "invalid_data", categoryName, nil
+    end
+    local itemId = itemData.id or (type(itemData.data) == "table" and itemData.data.id) or nil
+    if type(itemId) ~= "string" or itemId == "" then
+        return false, "missing_id", categoryName, nil
+    end
+    if Config.MailSkipLocked ~= false and itemData._lk == true then
+        return false, "locked", categoryName, nil
+    end
+
+    local sendClass = categoryName
+    local absMod = Modules.AbstractItem
+    if absMod and type(absMod.Get) == "function" then
+        local okObj, obj = pcall(absMod.Get, absMod, uid)
+        if okObj and type(obj) == "table" then
+            if type(obj.Class) == "table" and type(obj.Class.Name) == "string" and obj.Class.Name ~= "" then
+                sendClass = obj.Class.Name
+            end
+            if Config.MailSkipLocked ~= false and type(obj.IsLocked) == "function" then
+                local okL, isLocked = pcall(obj.IsLocked, obj)
+                if okL and isLocked == true then
+                    return false, "locked", sendClass, obj
+                end
+            end
+            if type(obj.IsTradable) == "function" then
+                local okT, isTradable = pcall(obj.IsTradable, obj)
+                if okT and isTradable == false then
+                    return false, "untradable", sendClass, obj
+                end
+            end
+            return true, nil, sendClass, obj
+        end
+    end
+
+    -- Fallback Directory.Tradable check if AbstractItem:Get was unavailable
+    if Modules.Directory then
+        local dirMap = {
+            Lootbox = "Lootboxes",
+            Misc = "MiscItems",
+            Fruit = "Fruits",
+            Potion = "Potions",
+            Enchant = "Enchants",
+            Pet = "Pets",
+            Currency = "Currency",
+            Charm = "Charms",
+            Egg = "Eggs",
+            Hoverboard = "Hoverboards",
+            Booth = "Booths",
+        }
+        local dirKey = dirMap[categoryName]
+        local dirTbl = dirKey and Modules.Directory[dirKey] or nil
+        local dirEntry = dirTbl and SafeDirLookup(dirTbl, itemId) or nil
+        if type(dirEntry) == "table" and dirEntry.Tradable == false then
+            return false, "untradable", sendClass, nil
+        end
+    end
+    return true, nil, sendClass, nil
+end
+
+function Runtime.Mail.MatchItemRule(categoryName, itemData, mailItems)
+    if type(mailItems) ~= "table" then return nil, nil end
+    local itemId = itemData.id or (type(itemData.data) == "table" and itemData.data.id) or ""
+    if type(itemId) ~= "string" or itemId == "" then return nil, nil end
+    local lowerId = itemId:lower()
+    local lowerCat = tostring(categoryName):lower()
+
+    -- 1. Exact Name / Class-scoped Rules (never substring match item names; explicit 0/false excludes)
+    for rawKey, rawVal in pairs(mailItems) do
+        local keyStr = tostring(rawKey)
+        local keyClass, keyName = keyStr:match("^([^:]+):(.+)$")
+        local spec = Runtime.Mail.ExtractRuleSpec(rawVal)
+        local matched = false
+        local reason = nil
+
+        if spec.class then
+            if lowerCat == spec.class:lower() then
+                local targetLower = (keyName or keyStr):lower()
+                if targetLower == lowerId
+                    or (categoryName == "Currency" and lowerId == "diamonds"
+                        and (targetLower == "diamond" or targetLower == "gems"))
+                then
+                    matched = true
+                    reason = string.format("[%s] %s", categoryName, itemId)
+                end
+            end
+        elseif keyClass and keyName then
+            if lowerCat == keyClass:lower() then
+                local targetLower = keyName:lower()
+                if targetLower == lowerId
+                    or (categoryName == "Currency" and lowerId == "diamonds"
+                        and (targetLower == "diamond" or targetLower == "gems"))
+                then
+                    matched = true
+                    reason = string.format("[%s] %s", categoryName, itemId)
+                end
+            end
+        else
+            local lowerKey = keyStr:lower()
+            if lowerKey == "diamonds" or lowerKey == "diamond" or lowerKey == "gems" then
+                if categoryName == "Currency" and lowerId == "diamonds" then
+                    matched = true
+                    reason = "Diamonds Currency"
+                end
+            elseif lowerKey ~= "keys" and lowerKey ~= "key"
+                and lowerKey ~= "huge pets" and lowerKey ~= "huge" and lowerKey ~= "huges"
+                and lowerKey ~= "titanic pets" and lowerKey ~= "titanic" and lowerKey ~= "titanics"
+                and lowerKey ~= "gargantuan pets" and lowerKey ~= "gargantuan" and lowerKey ~= "gargantuans"
+                and lowerKey ~= "exclusive pets" and lowerKey ~= "exclusive" and lowerKey ~= "exclusives"
+            then
+                if lowerKey == lowerId then
+                    matched = true
+                    reason = string.format("[%s] %s", categoryName, itemId)
+                end
+            end
+        end
+
+        if matched then
+            if spec.amount > 0 then
+                return spec, reason
+            end
+            return nil, nil
+        end
+    end
+
+    -- 2. Pet Category Aliases (Gargantuan, Titanic, Huge, Exclusive)
+    if categoryName == "Pet" then
+        local petsDir = Modules.Directory and Modules.Directory.Pets or nil
+        local pd = petsDir and SafeDirLookup(petsDir, itemId) or nil
+        local chaseCat = Runtime.Helpers.GetChaseCategory(itemId, pd)
+
+        local function pickAlias(aliases)
+            for _, alias in ipairs(aliases) do
+                local rawVal = mailItems[alias]
+                if rawVal ~= nil then
+                    local spec = Runtime.Mail.ExtractRuleSpec(rawVal)
+                    if not spec.class or spec.class:lower() == "pet" then
+                        return spec
+                    end
+                end
+            end
+            return nil
+        end
+
+        if chaseCat == "Gargantuan" then
+            local gSpec = pickAlias({ "Gargantuan Pets", "Gargantuan", "Gargantuans" })
+            if gSpec then
+                return (gSpec.amount > 0) and gSpec or nil, "Gargantuan Pet"
+            end
+            local tSpec = pickAlias({ "Titanic Pets", "Titanic", "Titanics" })
+            if tSpec and tSpec.amount > 0 then
+                return tSpec, "Gargantuan Pet"
+            end
+        elseif chaseCat == "Titanic" then
+            local tSpec = pickAlias({ "Titanic Pets", "Titanic", "Titanics" })
+            if tSpec and tSpec.amount > 0 then
+                return tSpec, "Titanic Pet"
+            end
+        elseif chaseCat == "Huge" then
+            local hSpec = pickAlias({ "Huge Pets", "Huge", "Huges" })
+            if hSpec and hSpec.amount > 0 then
+                return hSpec, "Huge Pet"
+            end
+        else
+            local isExclusive = (itemData.exclusive == true) or (type(pd) == "table" and pd.exclusive == true)
+            if isExclusive then
+                local eSpec = pickAlias({ "Exclusive Pets", "Exclusive", "Exclusives" })
+                if eSpec and eSpec.amount > 0 then
+                    return eSpec, "Exclusive Pet"
+                end
+            end
+        end
+    end
+
+    -- 3. Keys Alias
+    if (categoryName == "Misc" or categoryName == "Lootbox" or categoryName == "Item") and itemId:find("Key") then
+        local rawVal = mailItems["Keys"] or mailItems["Key"]
+        if rawVal ~= nil then
+            local spec = Runtime.Mail.ExtractRuleSpec(rawVal)
+            if spec.amount > 0 and (not spec.class or spec.class:lower() == lowerCat) then
+                return spec, "Key Item"
+            end
+        end
+    end
+
+    return nil, nil
+end
+
+function Runtime.Mail.BuildSanitizedMessage()
+    local raw = tostring(Config.MailMessage or "")
+    if raw == "" then return "" end
+    -- GUIs.Mailbox L344/L444: ASCII only and max 100 chars
+    local clean = raw:gsub("[^\32-\126]", "")
+    if #clean > 100 then
+        clean = clean:sub(1, 100)
+    end
+    if not clean:match("%S") then
+        return ""
+    end
+    return clean
+end
+
+function Runtime.Mail.NotifyWebhook(recipient, sendClass, itemId, amountSent, fee, reason)
+    if Config.MailWebhookEnabled ~= true then return end
+    local rawUrl = (type(Config.MailWebhookUrl) == "string" and Config.MailWebhookUrl ~= "")
+        and Config.MailWebhookUrl
+        or Config.WebhookUrl
+    local url = Runtime.Webhook.NormalizeUrl(rawUrl)
+    if not url then return end
+    local payload = {
+        embeds = {
+            {
+                title = "MAIL SENT",
+                description = string.format(
+                    "**Recipient:** `@%s`\n**Item:** `[%s] %s` x%s\n**Rule:** %s\n**Fee:** %s Diamonds\n**Account:** ||%s||",
+                    tostring(recipient),
+                    tostring(sendClass),
+                    tostring(itemId),
+                    Runtime.Helpers.FormatCommas(amountSent),
+                    tostring(reason or sendClass),
+                    Runtime.Helpers.FormatCommas(fee),
+                    LocalPlayer and LocalPlayer.Name or "Unknown"
+                ),
+                color = 3447003,
+                timestamp = DateTime.now():ToIsoDate(),
+            },
+        },
+        allowed_mentions = { parse = {} },
+    }
+    task.spawn(function()
+        if not IsRunning() then return end
+        local okPost, err = Runtime.Webhook.PostJson(url, payload)
+        if not okPost then
+            Log("DEBUG", "Mail webhook send failed: %s", tostring(err))
+        end
+    end)
+end
+
+function Runtime.Mail.CollectCandidates(save, mailItems)
+    local candidates = {}
+    if type(save) ~= "table" or type(save.Inventory) ~= "table" or type(mailItems) ~= "table" then
+        return candidates
+    end
+
+    local now = os.clock()
+    local failCooldowns = Runtime.Cache.MailFailCooldownByKey
+    local daycareUids, equippedCounts = Runtime.Mail.GetProtectedPetSets()
+    local chaseGraceSec = math.max(2.0, (tonumber(Config.WebhookPollInterval) or 1.0) + 1.5)
+    local petsDir = Modules.Directory and Modules.Directory.Pets or nil
+
+    -- 1. Non-Currency Inventory Items
+    for categoryName, categoryItems in pairs(save.Inventory) do
+        if categoryName ~= "Currency" and type(categoryItems) == "table" then
+            for uid, itemData in pairs(categoryItems) do
+                if type(itemData) == "table" then
+                    local spec, reason = Runtime.Mail.MatchItemRule(categoryName, itemData, mailItems)
+                    if spec and spec.amount > 0 then
+                        local failKey = categoryName .. ":" .. tostring(uid)
+                        if now >= (failCooldowns[failKey] or 0) then
+                            local okItem, _, sendClass = Runtime.Mail.InspectItem(categoryName, uid, itemData)
+                            if okItem then
+                                local rawAmount = math.max(1, math.floor(tonumber(itemData._am) or 1))
+                                local available = rawAmount
+                                local petBlocked = false
+                                if categoryName == "Pet" then
+                                    if daycareUids[uid] then
+                                        petBlocked = true
+                                    else
+                                        available = math.max(0, rawAmount - (equippedCounts[uid] or 0))
+                                    end
+                                    -- Let Pet Drop Webhook snapshot newly hatched Chase pets before shipping them out
+                                    if not petBlocked and available > 0 then
+                                        local pd = petsDir and SafeDirLookup(petsDir, itemData.id) or nil
+                                        if Runtime.Helpers.GetChaseCategory(itemData.id, pd) ~= nil then
+                                            local seenAt = Runtime.Cache.MailPetFirstSeen[uid]
+                                            if not seenAt then
+                                                Runtime.Cache.MailPetFirstSeen[uid] = now
+                                                petBlocked = true
+                                            elseif (now - seenAt) < chaseGraceSec then
+                                                petBlocked = true
+                                            end
+                                        end
+                                    end
+                                end
+
+                                if not petBlocked and available > 0 then
+                                    local sendable = math.max(0, available - spec.keep)
+                                    if sendable >= spec.minAmount then
+                                        local amountToSend = math.min(sendable, spec.amount)
+                                        if amountToSend > 0 then
+                                            table.insert(candidates, {
+                                                isCurrency = false,
+                                                category = categoryName,
+                                                sendClass = sendClass,
+                                                uid = uid,
+                                                id = itemData.id,
+                                                amount = amountToSend,
+                                                reason = reason,
+                                                failKey = failKey,
+                                            })
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    -- 2. Diamonds Currency (checked last so items can still pay mail fees first)
+    local invCurrency = save.Inventory.Currency
+    if type(invCurrency) == "table" then
+        for uid, itemData in pairs(invCurrency) do
+            if type(itemData) == "table" and itemData.id == "Diamonds" then
+                local spec, reason = Runtime.Mail.MatchItemRule("Currency", itemData, mailItems)
+                if spec and spec.amount > 0 then
+                    local failKey = "Currency:" .. tostring(uid)
+                    if now >= (failCooldowns[failKey] or 0) then
+                        local okItem, _, sendClass = Runtime.Mail.InspectItem("Currency", uid, itemData)
+                        if okItem then
+                            table.insert(candidates, {
+                                isCurrency = true,
+                                category = "Currency",
+                                sendClass = sendClass,
+                                uid = uid,
+                                id = "Diamonds",
+                                spec = spec,
+                                reason = reason or "Diamonds Currency",
+                                failKey = failKey,
+                            })
+                        end
+                    end
+                end
+                break
+            end
+        end
+    end
+
+    return candidates
+end
+
+function Runtime.Mail.StepSend()
+    if Config.AutoMail ~= true then return 0 end
+    if not (Modules.Network and type(Modules.Network.Invoke) == "function") then return 0 end
+
+    local mailItems = Config.MailItems
+    if type(mailItems) ~= "table" or next(mailItems) == nil then return 0 end
+
+    local recipients = Runtime.Mail.GetRecipients()
+    if #recipients == 0 then
+        local now = os.clock()
+        if (now - (Runtime.Cache.MailLastNoRecipientLogAt or 0)) >= 60 then
+            Runtime.Cache.MailLastNoRecipientLogAt = now
+            Log("INFO", "AutoMail active but MailUsernames has no valid recipient.")
+        end
+        return 0
+    end
+
+    local save = Runtime.Helpers.GetSaveData()
+    if not save then return 0 end
+
+    local candidates = Runtime.Mail.CollectCandidates(save, mailItems)
+    if #candidates == 0 then return 0 end
+
+    local maxFee = math.max(0, math.floor(tonumber(Config.MailMaxFee) or 0))
+    local reserve = math.max(0, math.floor(tonumber(Config.MailMinDiamondsReserve) or 100000))
+    local sendDelay = math.max(0.5, tonumber(Config.MailSendDelay) or 2.2)
+    local sentCount = 0
+
+    for _, cand in ipairs(candidates) do
+        if not IsRunning() or Config.AutoMail ~= true then break end
+
+        local recipient = Runtime.Mail.PickRecipient(recipients)
+        if not recipient then break end
+
+        local fee = Runtime.Mail.ComputeSendCost()
+        Runtime.Stats.MailLastFee = fee
+
+        if maxFee > 0 and fee > maxFee then
+            local now = os.clock()
+            if (now - (Runtime.Cache.MailLastSkipLogAt or 0)) >= 60 then
+                Runtime.Cache.MailLastSkipLogAt = now
+                Log("INFO", "AutoMail paused: current fee %s exceeds MailMaxFee %s.",
+                    Runtime.Helpers.FormatCommas(fee), Runtime.Helpers.FormatCommas(maxFee))
+            end
+            break
+        end
+
+        local curDiamonds = Runtime.Mail.GetDiamonds()
+        local amountToSend = cand.amount or 0
+        if cand.isCurrency then
+            local keepTotal = math.max(reserve, cand.spec.keep or 0)
+            local maxSendable = math.max(0, curDiamonds - keepTotal - fee)
+            local minThreshold = math.max(10000, cand.spec.minAmount or 1)
+            if maxSendable < minThreshold then
+                amountToSend = 0
+            else
+                amountToSend = math.min(maxSendable, cand.spec.amount)
+                if amountToSend < 10000 then
+                    amountToSend = 0
+                end
+            end
+        else
+            if curDiamonds < fee then
+                local now = os.clock()
+                if (now - (Runtime.Cache.MailLastSkipLogAt or 0)) >= 60 then
+                    Runtime.Cache.MailLastSkipLogAt = now
+                    Log("INFO", "AutoMail paused: need %s Diamonds for fee, have %s.",
+                        Runtime.Helpers.FormatCommas(fee), Runtime.Helpers.FormatCommas(curDiamonds))
+                end
+                break
+            end
+        end
+
+        if amountToSend > 0 then
+            local msg = Runtime.Mail.BuildSanitizedMessage()
+            if msg ~= "" and Workspace:GetServerTimeNow() < (Runtime.Cache.MailMessageCooldownUntil or 0) then
+                -- Avoid hitting server 60s message cooldown when user configured a non-empty message
+                msg = ""
+            end
+
+            local okInvoke, okSent, errMsg = pcall(
+                Modules.Network.Invoke,
+                "EF_Relay",
+                recipient,
+                msg,
+                cand.sendClass,
+                cand.uid,
+                amountToSend
+            )
+
+            if okInvoke and okSent == true then
+                sentCount = sentCount + 1
+                Runtime.Stats.MailSentCount = (Runtime.Stats.MailSentCount or 0) + 1
+                Runtime.Cache.MailFailCooldownByKey[cand.failKey] = nil
+                Runtime.Cache.MailPetFirstSeen[cand.uid] = nil
+                Runtime.Cache.MailInvDirty = true
+                if msg ~= "" then
+                    Runtime.Cache.MailMessageCooldownUntil = Workspace:GetServerTimeNow() + 60
+                end
+                Log("INFO", "Mail sent: [%s] %s x%s -> @%s (fee=%s)",
+                    tostring(cand.sendClass),
+                    tostring(cand.id),
+                    Runtime.Helpers.FormatCommas(amountToSend),
+                    tostring(recipient),
+                    Runtime.Helpers.FormatCommas(fee))
+                Runtime.Mail.NotifyWebhook(recipient, cand.sendClass, cand.id, amountToSend, fee, cand.reason)
+                task.wait(sendDelay)
+            else
+                Runtime.Stats.MailFailedCount = (Runtime.Stats.MailFailedCount or 0) + 1
+                local errText = tostring((not okInvoke and okSent) or errMsg or "unknown_error")
+                local cdSec = tonumber(errText:match("^Please wait (%d+) seconds"))
+                if cdSec then
+                    Runtime.Cache.MailMessageCooldownUntil = Workspace:GetServerTimeNow() + cdSec
+                end
+                Runtime.Cache.MailFailCooldownByKey[cand.failKey] = os.clock() + 60
+                local errLower = errText:lower()
+                if errLower:find("not found") or errLower:find("disabled") or errLower:find("does not exist")
+                    or errLower:find("doesn't exist") or errLower:find("friends only") or errLower:find("full")
+                then
+                    Runtime.Cache.MailFailCooldownByKey["user:" .. recipient:lower()] = os.clock() + 60
+                end
+                Log("DEBUG", "Mail send failed [%s] %s x%s -> @%s: %s",
+                    tostring(cand.sendClass),
+                    tostring(cand.id),
+                    Runtime.Helpers.FormatCommas(amountToSend),
+                    tostring(recipient),
+                    errText)
+                task.wait(1.0)
+            end
+        end
+    end
+
+    return sentCount
+end
+
+function Runtime.Mail.RunLoop()
+    Log("INFO", "Auto mail sender loop started (AutoMail=%s).", tostring(Config.AutoMail == true))
+    while IsRunning() do
+        if Config.AutoMail == true then
+            local ok, res = pcall(Runtime.Mail.StepSend)
+            if not ok then
+                Log("DEBUG", "Auto mail loop error: %s", tostring(res))
+            end
+        end
+        task.wait(math.max(1.0, tonumber(Config.MailScanInterval) or 10.0))
+    end
+end
+
+-- ============================================================================
 -- 13. MAIN CONCURRENT LOOPS
 -- ============================================================================
 function Runtime.Helpers.RunManagerTick()
     local plot = EnsureInPumpkinTycoon()
-    if not plot then
-        return false
-    end
+    if not plot then return false end
 
     StepTutorial(plot)
     local buttons, tycoonComplete, claimedComplete = StepButtonsAndComplete(plot)
@@ -8710,7 +8601,7 @@ function Runtime.Helpers.RunManagerTick()
             or string.format("Rushing Buttons (%d/%d)", Runtime.Stats.ButtonsDone, Runtime.Stats.ButtonsTotal))
 
     StepKeepLockAndStock(plot, buttons, tycoonComplete)
-    StepUpgrades(plot, buttons)
+    StepUpgrades(plot, buttons, tycoonComplete)
     StepConsumableBoosts(plot)
     Runtime.Helpers.StepConsumeFruits()
     Runtime.Helpers.UpdateCoinRateSampler()
@@ -8724,7 +8615,13 @@ function Runtime.Helpers.RunManagerTick()
         Runtime.Helpers.StepNetStore(plot, buttons, tycoonComplete)
     end
     if not Runtime.Helpers.StepSightingCatch(plot) and not fightingBoss then
-        Runtime.Helpers.StepWildHunt(plot, buttons)
+        Runtime.Helpers.StepWildHunt(plot, buttons, tycoonComplete)
+    else
+        Runtime.Cache.WildRerollActive = false
+    end
+    if Runtime.Cache.WildRerollActive and not fightingBoss then
+        local rz = math.clamp(math.floor(tonumber(Config.HuntRerollZone) or 1), 1, 8)
+        Runtime.Stats.Phase = string.format("Wild Reroll Z%d", rz)
     end
     if not fightingBoss then
         StepCraftPets(plot, buttons)
@@ -8826,6 +8723,9 @@ local function StartLoops()
 
     -- Loop F: Pet Drop Discord Webhook Watcher (Huge / Titanic / Gargantuan)
     task.spawn(Runtime.Webhook.RunLoop)
+
+    -- Loop G: Auto Mail Sender (Whitelist + Live Fee + Tradable/Lock/Equip Guard)
+    task.spawn(Runtime.Mail.RunLoop)
 end
 
 -- ============================================================================
@@ -8843,7 +8743,7 @@ if WaitReady() and IsRunning() then
         Set3dRenderingSafe(true)
     end
     SetupMapOptimizer()
-    Log("INFO", "Pumpkin Patch Tycoon Kaitun initialized (RushButtons=%s, TargetRebirths=%d, KeepRung=%d, AutoHunt=%s[Min=%d], AutoNetStore=%s, TargetEgg=%s, PetSpeed=%sx, OptimizeMap=%s, ShowKaitunUI=%s, UltraLowRAM=%s, AntiAfkMode=%s).",
+    Log("INFO", "Pumpkin Patch Tycoon Kaitun initialized (RushButtons=%s, TargetRebirths=%d, KeepRung=%d, AutoHunt=%s[Min=%d], AutoNetStore=%s, TargetEgg=%s, PetSpeed=%sx, OptimizeMap=%s, ShowKaitunUI=%s, UltraLowRAM=%s, AntiAfkMode=%s, AutoMail=%s).",
         tostring(Config.RushButtonsFirst),
         math.floor(tonumber(Config.TargetRebirths) or 0),
         tonumber(Config.KeepRung) or 0,
@@ -8855,7 +8755,8 @@ if WaitReady() and IsRunning() then
         tostring(Config.OptimizeMap),
         tostring(Config.ShowKaitunUI),
         tostring(Config.UltraLowRAM),
-        tostring(Config.AntiAfkMode)
+        tostring(Config.AntiAfkMode),
+        tostring(Config.AutoMail == true)
     )
     StartLoops()
 end
