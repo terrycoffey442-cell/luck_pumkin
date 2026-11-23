@@ -60,7 +60,6 @@ getgenv().Config = getgenv().Config or {
     MailUsernames = {},               -- Recipient username(s): { "MainAcc" } or "MainAcc"
     MailItems = {                     -- Whitelist: ["Item Name"] = Amount | "Max" | { Class = "...", Amount = "Max", MinAmount = 1, Keep = 0 }
         -- ["Huge Pets"]     = { Class = "Pet", Amount = "Max" },
-        -- ["Titanic Pets"]  = { Class = "Pet", Amount = "Max" },
         -- ["Diamonds"]      = { Class = "Currency", Amount = "Max" },
         -- ["Crystal Key"]   = { Class = "Misc", Amount = "Max" },
     },
@@ -594,6 +593,7 @@ local Runtime = {
         TurkeyBossTopParsed = nil,
         TurkeyBossOtherShareSum = 0,
         TurkeyBossOtherActiveAt = 0,
+        TurkeyBossOtherLiveDps = 0,
         TurkeyBossHpSampleAt = 0,
         TurkeyBossHpSampleVal = nil,
         TurkeyBossRejoinAfterAt = 0,
@@ -2342,6 +2342,7 @@ Runtime.Teardown = function()
     Runtime.Cache.TurkeyBossTopParsed = nil
     Runtime.Cache.TurkeyBossOtherShareSum = 0
     Runtime.Cache.TurkeyBossOtherActiveAt = 0
+    Runtime.Cache.TurkeyBossOtherLiveDps = 0
     Runtime.Cache.TurkeyBossHpSampleAt = 0
     Runtime.Cache.TurkeyBossHpSampleVal = nil
     Runtime.Cache.TurkeyBossRejoinAfterAt = 0
@@ -6898,7 +6899,7 @@ function Runtime.Helpers.ParseTurkeyTop(shared, topAttrName)
             end
         end
     end
-    if parsed.myDps > 0 then
+    if Runtime.Stats.FightingTurkeyBoss and parsed.myDps > (Runtime.Cache.TurkeyBossLastMyDps or 0) then
         Runtime.Cache.TurkeyBossLastMyDps = parsed.myDps
     end
     Runtime.Cache.TurkeyBossTopRaw = raw
@@ -6947,6 +6948,7 @@ function Runtime.Helpers.GetTurkeyBossState(plot, buttons)
         Runtime.Cache.TurkeyBossWatchedWindow = windowKey
         Runtime.Cache.TurkeyBossOtherShareSum = 0
         Runtime.Cache.TurkeyBossOtherActiveAt = 0
+        Runtime.Cache.TurkeyBossOtherLiveDps = 0
         Runtime.Cache.TurkeyBossHpSampleAt = 0
         Runtime.Cache.TurkeyBossHpSampleVal = nil
         Runtime.Cache.TurkeyBossRejoinAfterAt = 0
@@ -6998,17 +7000,31 @@ function Runtime.Helpers.GetTurkeyBossState(plot, buttons)
             }
         end
 
-        -- Track real damage progress from other players (detects stale TurkeyTop rows when other players leave)
-        if top.otherShareSum > ((Runtime.Cache.TurkeyBossOtherShareSum or 0) + 1e-6) then
+        -- Track real damage progress & live DPS from other players (avoids stale/decayed TurkeyTop[3] average DPS)
+        local prevOtherShare = Runtime.Cache.TurkeyBossOtherShareSum or 0
+        local prevOtherAt = Runtime.Cache.TurkeyBossOtherActiveAt or 0
+        if top.otherShareSum > (prevOtherShare + 1e-6) then
+            if prevOtherAt > 0 then
+                local dtOther = nowClk - prevOtherAt
+                if dtOther >= 0.75 and dtOther <= 30.0 then
+                    local liveOtherDps = ((top.otherShareSum - prevOtherShare) * maxHealth) / dtOther
+                    local prevLive = Runtime.Cache.TurkeyBossOtherLiveDps or 0
+                    Runtime.Cache.TurkeyBossOtherLiveDps = (prevLive > 0) and (prevLive * 0.5 + liveOtherDps * 0.5) or liveOtherDps
+                end
+            end
             Runtime.Cache.TurkeyBossOtherShareSum = top.otherShareSum
             Runtime.Cache.TurkeyBossOtherActiveAt = nowClk
         elseif top.otherFighters == 0 then
             Runtime.Cache.TurkeyBossOtherActiveAt = 0
+            Runtime.Cache.TurkeyBossOtherLiveDps = 0
         end
 
         local otherActive = (top.otherFighters > 0)
             and ((Runtime.Cache.TurkeyBossOtherActiveAt or 0) > 0)
             and ((nowClk - Runtime.Cache.TurkeyBossOtherActiveAt) <= 20.0)
+        if not otherActive then
+            Runtime.Cache.TurkeyBossOtherLiveDps = 0
+        end
 
         -- Track observed real HP drop rate while actively fighting
         local observedDps = nil
@@ -7044,9 +7060,12 @@ function Runtime.Helpers.GetTurkeyBossState(plot, buttons)
         end
 
         local soloCapDps = (maxHealth * soloShare) / math.max(1, lifeSec)
-        local myDpsEst = (top.myDps > 0 and top.myDps)
-            or ((Runtime.Cache.TurkeyBossLastMyDps or 0) > 0 and Runtime.Cache.TurkeyBossLastMyDps)
-            or (soloCapDps * 0.72)
+        local cachedMyDps = tonumber(Runtime.Cache.TurkeyBossLastMyDps) or 0
+        local activeMyDps = (Runtime.Stats.FightingTurkeyBoss and top.myDps > 0) and top.myDps or 0
+        local myDpsEst = math.max(activeMyDps, cachedMyDps)
+        if myDpsEst <= 0 then
+            myDpsEst = soloCapDps * 0.72
+        end
         local killMargin = math.clamp(tonumber(Config.TurkeyBossKillMargin) or 0.85, 0.5, 1.2)
         local probeSec = math.max(0, tonumber(Config.TurkeyBossSoloProbeSec) or 25)
 
@@ -7057,7 +7076,8 @@ function Runtime.Helpers.GetTurkeyBossState(plot, buttons)
         local effectiveDps = myDpsEst
 
         if otherActive then
-            local reportedTeamDps = top.otherDps + myDpsEst
+            local otherEstDps = math.max(top.otherDps, Runtime.Cache.TurkeyBossOtherLiveDps or 0)
+            local reportedTeamDps = otherEstDps + myDpsEst
             effectiveDps = (observedDps ~= nil and observedDps > 0) and observedDps or reportedTeamDps
             local projectedDmg = effectiveDps * secLeft
             if projectedDmg < (health * killMargin) then
