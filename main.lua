@@ -8,7 +8,7 @@
 -- ============================================================================
 getgenv().Config = getgenv().Config or {
     Enabled = true,
-    Debug = true,
+    Debug = "auto",                   -- "auto" (false on Mobile/Delta, true on PC) | true | false
 
     -- Progression (Part 1 + Part 2)
     RushButtonsFirst = true,          -- Hold Coins for Buttons + Completion before Hatch/Merchant
@@ -49,7 +49,8 @@ getgenv().Config = getgenv().Config or {
     -- Performance & UI
     ShowKaitunUI = true,              -- Full-screen black dashboard overlay + 3D rendering off
     OptimizeMap = true,
-    UltraLowRAM = false,
+    UltraLowRAM = "auto",             -- "auto" (true on Mobile/Delta, false on PC) | true | false
+    FPSCap = 0,                       -- 0 = auto (uncapped on PC; Mobile uses 15 FPS 3D-off / 25 FPS 3D-on)
 
     -- Discord Pet Drop Webhook (Huge / Titanic / Gargantuan)
     WebhookEnabled = true,
@@ -81,7 +82,7 @@ end
 -- ============================================================================
 local DEFAULT_CONFIG = {
     Enabled = true,
-    Debug = true,
+    Debug = "auto",
 
     -- Instance & Onboarding
     AutoJoin = true,
@@ -284,7 +285,11 @@ local DEFAULT_CONFIG = {
     AutoEventPass = false,
 
     -- Map & Render Optimization
-    UltraLowRAM = false,                -- Optional ultra-low RAM preset (PotatoMode + ReduceOrbs + child-cleared Eggs/ShinyRelics/ZoneEggs + slower intervals)
+    UltraLowRAM = "auto",               -- "auto" (enabled on Mobile/Delta) | true | false (PotatoMode + PS99 low-RAM settings + child-cleared Eggs/ShinyRelics/ZoneEggs + slower intervals)
+    FPSCap = 0,                         -- 0 = auto (PC uncapped; Mobile uses MobileFPSCap3dOff/On); > 0 forces FPS cap everywhere
+    MobileFPSCap3dOff = 15,             -- Mobile/Delta FPS cap while 3D rendering is disabled
+    MobileFPSCap3dOn = 25,              -- Mobile/Delta FPS cap while 3D rendering is enabled
+    ClearTerrainVoxels = "auto",        -- "auto" (false on Mobile, true on PC); only calls terrain:Clear() if voxel cells > 0
     OptimizeMap = true,                 -- Master toggle for world cleanup + visual hiding + lighting/FX reduction
     StripWorldClutter = true,           -- Destroy unused world maps/props (PSX Portal, Border, Ornaments, __DEBRIS)
     HideIslandVisuals = true,           -- Make PumpkinTycoonIslands, __THINGS.Plots, Pads, Pumpkins invisible + strip decals/FX (when 3D is active)
@@ -343,15 +348,97 @@ do
     local userConfig = type(getgenv().Config) == "table" and getgenv().Config or {}
     local userSet = {
         ShowKaitunUI = userConfig.ShowKaitunUI ~= nil,
+        FarmLoopInterval = userConfig.FarmLoopInterval ~= nil,
+        HatchCooldown = userConfig.HatchCooldown ~= nil,
+        TapInterval = userConfig.TapInterval ~= nil,
         WebhookPollInterval = userConfig.WebhookPollInterval ~= nil,
         CraftCheckIntervalSec = userConfig.CraftCheckIntervalSec ~= nil,
         OptimizeScanInterval = userConfig.OptimizeScanInterval ~= nil,
     }
     ApplyConfigDefaults(Config, userConfig)
     ApplyConfigDefaults(Config, DEFAULT_CONFIG)
+
+    local isMobileEnv = false
+    pcall(function()
+        if type(Delta) == "table" then
+            if type(Delta.is_android) == "function" then
+                local okA, resA = pcall(Delta.is_android)
+                if okA and resA == true then isMobileEnv = true end
+            end
+            if not isMobileEnv and type(Delta.is_ios) == "function" then
+                local okI, resI = pcall(Delta.is_ios)
+                if okI and resI == true then isMobileEnv = true end
+            end
+            if not isMobileEnv and type(Delta.get_platform) == "function" then
+                local okP, platStr = pcall(Delta.get_platform)
+                if okP and type(platStr) == "string" then
+                    local lp = string.lower(platStr)
+                    if string.find(lp, "android", 1, true) or string.find(lp, "ios", 1, true) then
+                        isMobileEnv = true
+                    end
+                end
+            end
+        end
+    end)
+    if not isMobileEnv then
+        pcall(function()
+            local uis = game:GetService("UserInputService")
+            if uis then
+                local okP, plat = pcall(uis.GetPlatform, uis)
+                if okP and (plat == Enum.Platform.Android or plat == Enum.Platform.IOS) then
+                    isMobileEnv = true
+                elseif uis.TouchEnabled == true and uis.KeyboardEnabled ~= true then
+                    isMobileEnv = true
+                end
+            end
+        end)
+    end
+    if not isMobileEnv then
+        pcall(function()
+            local execName = ""
+            if type(identifyexecutor) == "function" then
+                execName = tostring(identifyexecutor() or "")
+            elseif type(getexecutorname) == "function" then
+                execName = tostring(getexecutorname() or "")
+            end
+            local lowerExec = string.lower(execName)
+            for _, marker in ipairs({ "delta", "arceus", "codex", "fluxus", "hydrogen", "vegax", "cryptic" }) do
+                if string.find(lowerExec, marker, 1, true) then
+                    isMobileEnv = true
+                    break
+                end
+            end
+        end)
+    end
+
+    if type(Config.UltraLowRAM) == "string" then
+        Config.UltraLowRAM = (string.lower(Config.UltraLowRAM) == "auto") and isMobileEnv or (string.lower(Config.UltraLowRAM) == "true")
+    else
+        Config.UltraLowRAM = (Config.UltraLowRAM == true)
+    end
+    if type(Config.Debug) == "string" then
+        Config.Debug = (string.lower(Config.Debug) == "auto") and (not isMobileEnv) or (string.lower(Config.Debug) == "true")
+    else
+        Config.Debug = (Config.Debug ~= false)
+    end
+    if type(Config.ClearTerrainVoxels) == "string" then
+        Config.ClearTerrainVoxels = (string.lower(Config.ClearTerrainVoxels) == "auto") and (not isMobileEnv) or (string.lower(Config.ClearTerrainVoxels) == "true")
+    else
+        Config.ClearTerrainVoxels = (Config.ClearTerrainVoxels == true)
+    end
+
     if Config.UltraLowRAM then
         if not userSet.ShowKaitunUI then
             Config.ShowKaitunUI = true
+        end
+        if not userSet.FarmLoopInterval then
+            Config.FarmLoopInterval = math.max(tonumber(Config.FarmLoopInterval) or 0.10, 0.18)
+        end
+        if not userSet.HatchCooldown then
+            Config.HatchCooldown = math.max(tonumber(Config.HatchCooldown) or 0.02, 0.06)
+        end
+        if not userSet.TapInterval then
+            Config.TapInterval = math.max(tonumber(Config.TapInterval) or 0.065, 0.085)
         end
         if not userSet.WebhookPollInterval then
             Config.WebhookPollInterval = math.max(tonumber(Config.WebhookPollInterval) or 1.0, 3.0)
@@ -360,7 +447,7 @@ do
             Config.CraftCheckIntervalSec = math.max(tonumber(Config.CraftCheckIntervalSec) or 1.0, 2.5)
         end
         if not userSet.OptimizeScanInterval then
-            Config.OptimizeScanInterval = math.max(tonumber(Config.OptimizeScanInterval) or 15.0, 15.0)
+            Config.OptimizeScanInterval = math.max(tonumber(Config.OptimizeScanInterval) or 15.0, 20.0)
         end
     end
 end
@@ -501,6 +588,17 @@ local Runtime = {
         MapOptimizerInitialized = false,
         MapClutterClearedInEvent = false,
         Is3dRenderingEnabled = (Config.ShowKaitunUI == false),
+        PrevFpsCap = nil,
+        PrevTargetFramerate = nil,
+        ActiveFpsCap = nil,
+        KaitunGuiUsedCoreGui = false,
+        PrevNotificationsGuiEnabled = nil,
+        PrevEggOpenGuiEnabled = nil,
+        EggOpenGuiConnBound = false,
+        OrbCreateBatch = {},
+        TurkeyRaycastParams = nil,
+        TurkeyRaycastFilter = nil,
+        TurkeyRaycastShared = nil,
         PlayerCharConns = setmetatable({}, { __mode = "k" }),
         VisualStripQueue = {
             head = 1,
@@ -629,6 +727,153 @@ local Runtime = {
 
 local KAITUN_GUI_NAME = "Kaitun_Dashboard_UI"
 
+function Runtime.Helpers.DetectMobileAntiAfk()
+    if Runtime.Cache.AntiAfkEnv then return Runtime.Cache.AntiAfkEnv end
+    local isTouchOnly = false
+    local isMobilePlatform = false
+    local platformName = ""
+    pcall(function()
+        if UserInputService then
+            isTouchOnly = (UserInputService.TouchEnabled == true) and (UserInputService.KeyboardEnabled ~= true)
+            local okP, plat = pcall(UserInputService.GetPlatform, UserInputService)
+            if okP and plat ~= nil then
+                platformName = tostring(plat)
+                if plat == Enum.Platform.Android or plat == Enum.Platform.IOS then
+                    isMobilePlatform = true
+                end
+            end
+        end
+    end)
+    local isDeltaMobile = false
+    pcall(function()
+        if type(Delta) == "table" then
+            if type(Delta.is_android) == "function" then
+                local okA, resA = pcall(Delta.is_android)
+                if okA and resA == true then isDeltaMobile = true end
+            end
+            if not isDeltaMobile and type(Delta.is_ios) == "function" then
+                local okI, resI = pcall(Delta.is_ios)
+                if okI and resI == true then isDeltaMobile = true end
+            end
+            if not isDeltaMobile and type(Delta.get_platform) == "function" then
+                local okP, platStr = pcall(Delta.get_platform)
+                if okP and type(platStr) == "string" then
+                    local lp = string.lower(platStr)
+                    if string.find(lp, "android", 1, true) or string.find(lp, "ios", 1, true) then
+                        isDeltaMobile = true
+                    end
+                end
+            end
+        end
+    end)
+    local execName = ""
+    pcall(function()
+        if type(identifyexecutor) == "function" then
+            execName = tostring(identifyexecutor() or "")
+        elseif type(getexecutorname) == "function" then
+            execName = tostring(getexecutorname() or "")
+        end
+    end)
+    local lowerExec = string.lower(execName)
+    local isMobileExec = false
+    for _, marker in ipairs({ "delta", "arceus", "codex", "fluxus", "hydrogen", "vegax", "cryptic" }) do
+        if string.find(lowerExec, marker, 1, true) then
+            isMobileExec = true
+            break
+        end
+    end
+    local envInfo = {
+        isTouchOnly = isTouchOnly,
+        isMobilePlatform = isMobilePlatform,
+        isDeltaMobile = isDeltaMobile,
+        isMobileExec = isMobileExec,
+        platformName = platformName,
+        execName = execName,
+        isMobile = isTouchOnly or isMobilePlatform or isDeltaMobile or isMobileExec,
+    }
+    Runtime.Cache.AntiAfkEnv = envInfo
+    return envInfo
+end
+
+function Runtime.Helpers.ApplyFpsCap(targetFps)
+    local cap = tonumber(targetFps)
+    if not cap or cap <= 0 then return false end
+    cap = math.clamp(math.floor(cap + 0.5), 5, 240)
+    if Runtime.Cache.ActiveFpsCap == cap then return true end
+    local genv = (type(getgenv) == "function" and getgenv()) or _G
+    if Runtime.Cache.PrevFpsCap == nil then
+        local getCapFn = genv.getfpscap or genv.get_fps_cap or getfpscap
+        if type(getCapFn) == "function" then
+            local okPrev, prevCap = pcall(getCapFn)
+            if okPrev and type(prevCap) == "number" and prevCap > 0 then
+                Runtime.Cache.PrevFpsCap = prevCap
+            end
+        end
+    end
+    local applied = false
+    local setCapFn = genv.setfpscap or genv.set_fps_cap or setfpscap
+    if type(setCapFn) == "function" then
+        local okSet = pcall(setCapFn, cap)
+        if okSet then applied = true end
+    end
+    pcall(function()
+        local userSettings = UserSettings and UserSettings()
+        local ugs = userSettings and userSettings:GetService("UserGameSettings")
+        if ugs and ugs.TargetFramerate ~= nil then
+            if Runtime.Cache.PrevTargetFramerate == nil then
+                Runtime.Cache.PrevTargetFramerate = ugs.TargetFramerate
+            end
+            ugs.TargetFramerate = cap
+            applied = true
+        end
+    end)
+    if applied then
+        Runtime.Cache.ActiveFpsCap = cap
+    end
+    return applied
+end
+
+function Runtime.Helpers.SyncFpsCapFor3d(is3dOn)
+    local explicitCap = tonumber(Config.FPSCap) or 0
+    if explicitCap > 0 then
+        Runtime.Helpers.ApplyFpsCap(explicitCap)
+        return
+    end
+    local envInfo = Runtime.Helpers.DetectMobileAntiAfk()
+    if envInfo and envInfo.isMobile then
+        local mobileCap = is3dOn
+            and (tonumber(Config.MobileFPSCap3dOn) or 25)
+            or (tonumber(Config.MobileFPSCap3dOff) or 15)
+        if mobileCap > 0 then
+            Runtime.Helpers.ApplyFpsCap(mobileCap)
+        end
+    end
+end
+
+function Runtime.Helpers.RestoreFpsCap()
+    local prevCap = Runtime.Cache.PrevFpsCap
+    local prevTf = Runtime.Cache.PrevTargetFramerate
+    Runtime.Cache.ActiveFpsCap = nil
+    if type(prevCap) == "number" and prevCap > 0 then
+        local genv = (type(getgenv) == "function" and getgenv()) or _G
+        local setCapFn = genv.setfpscap or genv.set_fps_cap or setfpscap
+        if type(setCapFn) == "function" then
+            pcall(setCapFn, prevCap)
+        end
+        Runtime.Cache.PrevFpsCap = nil
+    end
+    if prevTf ~= nil then
+        pcall(function()
+            local userSettings = UserSettings and UserSettings()
+            local ugs = userSettings and userSettings:GetService("UserGameSettings")
+            if ugs then
+                ugs.TargetFramerate = prevTf
+            end
+        end)
+        Runtime.Cache.PrevTargetFramerate = nil
+    end
+end
+
 local function Set3dRenderingSafe(enabled)
     local active = (enabled == true)
     if Runtime.Cache then
@@ -637,6 +882,9 @@ local function Set3dRenderingSafe(enabled)
     pcall(function()
         (RunService :: any):Set3dRenderingEnabled(active)
     end)
+    if Runtime.Helpers and Runtime.Helpers.SyncFpsCapFor3d then
+        Runtime.Helpers.SyncFpsCapFor3d(active)
+    end
     if Runtime.Helpers and Runtime.Helpers.On3dRenderingChanged then
         Runtime.Helpers.On3dRenderingChanged(active)
     end
@@ -661,16 +909,25 @@ local function CleanupKaitunDashboard()
     if Runtime.Cache then
         Runtime.Cache.KaitunUiToken = nil
     end
-    if LocalPlayer then
-        DestroyExistingKaitunGui(LocalPlayer:FindFirstChild("PlayerGui"))
+    local pg = LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui")
+    if pg then
+        DestroyExistingKaitunGui(pg)
     end
-    local okCg, cg = pcall(function()
-        return (cloneref and cloneref(game:GetService("CoreGui"))) or game:GetService("CoreGui")
-    end)
-    if okCg and cg then
-        DestroyExistingKaitunGui(cg)
+    if (not pg) or (Runtime.Cache and Runtime.Cache.KaitunGuiUsedCoreGui == true) then
+        local okCg, cg = pcall(function()
+            return (cloneref and cloneref(game:GetService("CoreGui"))) or game:GetService("CoreGui")
+        end)
+        if okCg and cg then
+            DestroyExistingKaitunGui(cg)
+        end
+        if Runtime.Cache then
+            Runtime.Cache.KaitunGuiUsedCoreGui = false
+        end
     end
     Set3dRenderingSafe(true)
+    if Runtime.Helpers and Runtime.Helpers.RestoreFpsCap then
+        Runtime.Helpers.RestoreFpsCap()
+    end
 end
 
 local function IsRunning()
@@ -916,40 +1173,6 @@ EnsureCriticalModules()
 if not IsRunning() then return end
 
 local NET_FIRE_HOOK_KEY = "_PumpkinTycoonKaitun_NetFireHookTarget"
-
-function Runtime.Helpers.DetectMobileAntiAfk()
-    if Runtime.Cache.AntiAfkEnv then return Runtime.Cache.AntiAfkEnv end
-    local isTouchOnly = false
-    pcall(function()
-        if UserInputService then
-            isTouchOnly = (UserInputService.TouchEnabled == true) and (UserInputService.KeyboardEnabled ~= true)
-        end
-    end)
-    local execName = ""
-    pcall(function()
-        if type(identifyexecutor) == "function" then
-            execName = tostring(identifyexecutor() or "")
-        elseif type(getexecutorname) == "function" then
-            execName = tostring(getexecutorname() or "")
-        end
-    end)
-    local lowerExec = string.lower(execName)
-    local isMobileExec = false
-    for _, marker in ipairs({ "delta", "arceus", "codex", "fluxus", "hydrogen", "vegax", "cryptic" }) do
-        if string.find(lowerExec, marker, 1, true) then
-            isMobileExec = true
-            break
-        end
-    end
-    local envInfo = {
-        isTouchOnly = isTouchOnly,
-        isMobileExec = isMobileExec,
-        execName = execName,
-        isMobile = isTouchOnly or isMobileExec,
-    }
-    Runtime.Cache.AntiAfkEnv = envInfo
-    return envInfo
-end
 
 function Runtime.Helpers.GetEffectiveAntiAfkStrategy()
     local envInfo = Runtime.Helpers.DetectMobileAntiAfk()
@@ -1549,7 +1772,6 @@ local THINGS_CLEAR_FOLDERS = {
     "BalloonGifts",
     "Hoverboards",
     "InfinityEggs",
-    "Flags",
     "VictoryScene",
     "__FAKE_INSTANCE_BREAK_ZONES",
 }
@@ -1853,9 +2075,14 @@ local function ApplyLightingAndEffectsOptimization()
             terrain.WaterWaveSpeed = 0
             terrain.WaterReflectance = 0
             terrain.WaterTransparency = 1
-            pcall(function()
-                terrain:Clear()
-            end)
+            if Config.ClearTerrainVoxels == true then
+                pcall(function()
+                    local cells = terrain:CountCells()
+                    if type(cells) == "number" and cells > 0 then
+                        terrain:Clear()
+                    end
+                end)
+            end
         end
     end
 
@@ -1971,24 +2198,111 @@ function Runtime.Helpers.ApplyUltraLowRamSettings()
         end
         Modules.Variables.PotatoMode = true
     end
-    local needReduceOrbs = false
-    local sc = Modules.SettingsCmds
-    if sc and type(sc.Get) == "function" and type(sc.GetValue) == "function" then
-        local okG, valStr = pcall(sc.Get, "ReduceOrbs")
-        local okV, valNum = pcall(sc.GetValue, "ReduceOrbs")
-        if (not okG or valStr ~= "On") and (not okV or valNum ~= 1) then
-            needReduceOrbs = true
+
+    local watchedGuis = Runtime.Cache.LowRamGuiWatched
+    if type(watchedGuis) ~= "table" then
+        watchedGuis = setmetatable({}, { __mode = "k" })
+        Runtime.Cache.LowRamGuiWatched = watchedGuis
+    end
+    local function suppressLowRamGui(child)
+        if not child or not child:IsA("ScreenGui") then return end
+        local name = child.Name
+        local shouldLock = false
+        if name == "Notifications" then
+            if Runtime.Cache.PrevNotificationsGuiEnabled == nil then
+                Runtime.Cache.PrevNotificationsGuiEnabled = child.Enabled
+            end
+            shouldLock = true
+        elseif Config.HatchDisableAnimation and (name == "EggOpenAnimation" or name == "HatchAnimation") then
+            if name == "EggOpenAnimation" and Runtime.Cache.PrevEggOpenGuiEnabled == nil then
+                Runtime.Cache.PrevEggOpenGuiEnabled = child.Enabled
+            end
+            shouldLock = true
         end
-    else
-        local saveData = Runtime.Helpers.GetSaveData and Runtime.Helpers.GetSaveData()
-        local cur = saveData and saveData.Settings and saveData.Settings.ReduceOrbs
-        if cur ~= 1 then
-            needReduceOrbs = true
+        if not shouldLock then return end
+        if child.Enabled then
+            pcall(function()
+                child.Enabled = false
+            end)
+        end
+        if not watchedGuis[child] then
+            watchedGuis[child] = true
+            BindConn(child:GetPropertyChangedSignal("Enabled"), function()
+                if IsRunning() and Config.UltraLowRAM and child.Enabled then
+                    pcall(function()
+                        child.Enabled = false
+                    end)
+                end
+            end)
         end
     end
-    if needReduceOrbs and Modules.Network and type(Modules.Network.Invoke) == "function" then
+
+    local pg = LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui")
+    if pg then
+        for _, child in ipairs(pg:GetChildren()) do
+            suppressLowRamGui(child)
+        end
+        if not Runtime.Cache.EggOpenGuiConnBound then
+            Runtime.Cache.EggOpenGuiConnBound = true
+            BindConn(pg.ChildAdded, function(child)
+                if IsRunning() and Config.UltraLowRAM then
+                    suppressLowRamGui(child)
+                end
+            end)
+        end
+    end
+
+    if Modules.Network and type(Modules.Network.Invoke) == "function" then
         task.spawn(function()
-            pcall(Modules.Network.Invoke, "Toggle Setting", "ReduceOrbs")
+            local sc = Modules.SettingsCmds
+            local hasSc = type(sc) == "table" and type(sc.Get) == "function" and type(sc.GetValue) == "function"
+            local function readSetting(name)
+                if hasSc then
+                    local okG, strVal = pcall(sc.Get, name)
+                    local okV, numVal = pcall(sc.GetValue, name)
+                    return okG and strVal or nil, okV and numVal or nil
+                end
+                local saveData = Runtime.Helpers.GetSaveData and Runtime.Helpers.GetSaveData()
+                local raw = saveData and saveData.Settings and saveData.Settings[name]
+                return nil, raw
+            end
+            local function ensureToggleState(name, wantStr, wantNum)
+                if not IsRunning() then return end
+                local curStr, curNum = readSetting(name)
+                if curStr == wantStr or (curStr == nil and curNum == wantNum) then return end
+                if curStr == nil and curNum == nil then return end
+                pcall(Modules.Network.Invoke, "Toggle Setting", name)
+                task.wait(0.08)
+            end
+            local function ensureSliderZero(name)
+                if not IsRunning() then return end
+                local _, curNum = readSetting(name)
+                if type(curNum) == "number" and curNum ~= 0 then
+                    pcall(Modules.Network.Invoke, "Slider Setting", name, 0)
+                    task.wait(0.08)
+                end
+            end
+
+            -- Verified PS99 SettingsCmds values: 1="On", 2="Off"
+            for _, settingName in ipairs({ "PotatoMode", "EggPotatoMode", "ReduceOrbs", "HideOwnPets" }) do
+                ensureToggleState(settingName, "On", 1)
+            end
+            for _, settingName in ipairs({ "ShowOtherPets", "PetSFX", "NotificationsSFX", "Vibrations" }) do
+                ensureToggleState(settingName, "Off", 2)
+            end
+
+            -- Multi-state ItemNotifications (1="All" -> cycle to "Off" / 2 with bounded attempts)
+            for _ = 1, 6 do
+                if not IsRunning() then break end
+                local curStr, curNum = readSetting("ItemNotifications")
+                if curStr == "Off" or curNum == 2 or (curStr == nil and curNum == nil) then break end
+                local okInv = pcall(Modules.Network.Invoke, "Toggle Setting", "ItemNotifications")
+                if not okInv then break end
+                task.wait(0.08)
+            end
+
+            ensureSliderZero("SFX")
+            ensureSliderZero("Music")
         end)
     end
 end
@@ -2239,6 +2553,31 @@ local function RestoreMapOptimizer()
         Modules.Variables.PotatoMode = Runtime.Cache.PrevPotatoMode
         Runtime.Cache.PrevPotatoMode = nil
     end
+    local pg = LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui")
+    if pg then
+        if Runtime.Cache.PrevNotificationsGuiEnabled ~= nil then
+            local notifsGui = pg:FindFirstChild("Notifications")
+            if notifsGui and notifsGui:IsA("ScreenGui") then
+                pcall(function()
+                    notifsGui.Enabled = Runtime.Cache.PrevNotificationsGuiEnabled
+                end)
+            end
+            Runtime.Cache.PrevNotificationsGuiEnabled = nil
+        end
+        if Runtime.Cache.PrevEggOpenGuiEnabled ~= nil then
+            local eggGui = pg:FindFirstChild("EggOpenAnimation")
+            if eggGui and eggGui:IsA("ScreenGui") then
+                pcall(function()
+                    eggGui.Enabled = Runtime.Cache.PrevEggOpenGuiEnabled
+                end)
+            end
+            Runtime.Cache.PrevEggOpenGuiEnabled = nil
+        end
+    end
+    Runtime.Cache.EggOpenGuiConnBound = false
+    if type(Runtime.Cache.LowRamGuiWatched) == "table" then
+        table.clear(Runtime.Cache.LowRamGuiWatched)
+    end
     Runtime.Cache.UltraLowRamApplied = false
     Runtime.Cache.MapClutterClearedInEvent = false
 
@@ -2320,6 +2659,21 @@ Runtime.Teardown = function()
     table.clear(Runtime.Cache.PlotSaveConnsBound)
     Runtime.Cache.PedInfoCache = nil
     Runtime.Cache.TapTargets = nil
+    if type(Runtime.Cache.ActiveTargetCopy) == "table" then
+        Runtime.Cache.ActiveTargetCopy.model = nil
+    end
+    for _, pool in ipairs({ Runtime.Cache.EntryPoolA, Runtime.Cache.EntryPoolB }) do
+        if type(pool) == "table" then
+            for i = 1, #pool do
+                if type(pool[i]) == "table" then
+                    pool[i].model = nil
+                end
+            end
+        end
+    end
+    Runtime.Cache.TurkeyRaycastShared = nil
+    Runtime.Cache.TurkeyRaycastFilter = nil
+    Runtime.Cache.TurkeyRaycastParams = nil
     table.clear(Runtime.Cache.TargetEggCache)
     Runtime.Cache.MachineSessionDepth = 0
     Runtime.Cache.HatchYieldUntil = 0
@@ -3656,6 +4010,12 @@ local function CollectMyBreakables(plot, pedInfo)
         end
     end
 
+    for i = poolIdx + 1, #entryPool do
+        local stale = entryPool[i]
+        if not stale or stale.model == nil then break end
+        stale.model = nil
+    end
+
     if #targets == 0 and #emergencyFallback > 0 then
         -- Deadlock safety: break lowest-rung unlocked pedestal if every unlocked slot paused simultaneously
         table.sort(emergencyFallback, function(a, b)
@@ -3780,6 +4140,7 @@ local function StepFarmTargeter(plot)
     if plot and Runtime.Helpers.StepTurkeyBossTarget and Runtime.Helpers.StepTurkeyBossTarget(plot) then return end
     if not Config.AutoFarm or not plot then
         activeFarmTarget = nil
+        Runtime.Cache.ActiveTargetCopy.model = nil
         Runtime.Stats.ActiveTargetUid = nil
         Runtime.Stats.ActiveTargetDesc = "Idle"
         ReleaseHeldPets()
@@ -3791,6 +4152,7 @@ local function StepFarmTargeter(plot)
     Runtime.Cache.TapTargets = targets
     if #targets == 0 then
         activeFarmTarget = nil
+        Runtime.Cache.ActiveTargetCopy.model = nil
         Runtime.Stats.ActiveTargetUid = nil
         Runtime.Stats.ActiveTargetDesc = "Waiting spawn"
         return
@@ -3956,22 +4318,26 @@ function Runtime.Helpers.EnsureOrbsCreateHook()
         Runtime.Cache.OrbsCreateConnBound = true
         BindConn(sig, function(data)
             if not IsRunning() or not Config.AutoCollectOrbs or type(data) ~= "table" then return end
-            local batch = nil
+            local batch = Runtime.Cache.OrbCreateBatch
+            if not batch then
+                batch = {}
+                Runtime.Cache.OrbCreateBatch = batch
+            else
+                table.clear(batch)
+            end
             for _, orb in ipairs(data) do
                 local numId = type(orb) == "table" and tonumber(orb.id) or nil
                 if numId then
-                    if not batch then
-                        batch = {}
-                    end
                     table.insert(batch, numId)
                     if #batch >= 50 then
                         FireOrbsCollect(batch)
-                        batch = {}
+                        table.clear(batch)
                     end
                 end
             end
-            if batch and #batch > 0 then
+            if #batch > 0 then
                 FireOrbsCollect(batch)
+                table.clear(batch)
             end
         end)
     end
@@ -6840,10 +7206,20 @@ function Runtime.Helpers.GetTurkeyArenaStandPos(shared, bossModel)
     local probe = Vector3.new(center.X + offset, center.Y, center.Z)
     local groundY = center.Y
     if shared then
-        local rp = RaycastParams.new()
-        rp.FilterType = Enum.RaycastFilterType.Include
-        rp.FilterDescendantsInstances = { shared }
-        rp.RespectCanCollide = true
+        local rp = Runtime.Cache.TurkeyRaycastParams
+        if not rp then
+            rp = RaycastParams.new()
+            rp.FilterType = Enum.RaycastFilterType.Include
+            rp.RespectCanCollide = true
+            Runtime.Cache.TurkeyRaycastParams = rp
+        end
+        if Runtime.Cache.TurkeyRaycastShared ~= shared then
+            local flt = Runtime.Cache.TurkeyRaycastFilter or {}
+            flt[1] = shared
+            Runtime.Cache.TurkeyRaycastFilter = flt
+            Runtime.Cache.TurkeyRaycastShared = shared
+            rp.FilterDescendantsInstances = flt
+        end
         local hit = Workspace:Raycast(Vector3.new(probe.X, center.Y + 50, probe.Z), Vector3.new(0, -150, 0), rp)
         if hit and hit.Position then
             groundY = hit.Position.Y
@@ -7191,6 +7567,7 @@ function Runtime.Helpers.ReturnFromTurkeyArena(plot, leaveReason)
     Runtime.Cache.TurkeyBossHpSampleAt = 0
     Runtime.Cache.TurkeyBossHpSampleVal = nil
     activeFarmTarget = nil
+    Runtime.Cache.ActiveTargetCopy.model = nil
     Runtime.Cache.TapTargets = nil
     Runtime.Stats.ActiveTargetUid = nil
 
@@ -7288,6 +7665,7 @@ function Runtime.Helpers.StepTurkeyBossTarget(plot)
         AssignPetsToModel(bossState.model)
     else
         activeFarmTarget = nil
+        Runtime.Cache.ActiveTargetCopy.model = nil
         Runtime.Cache.TapTargets = nil
         Runtime.Stats.ActiveTargetUid = nil
         Runtime.Stats.ActiveTargetDesc = "TurkeyBoss (Loading)"
@@ -7421,16 +7799,23 @@ end
 
 function UI.FindDashboardParent()
     local pg = LocalPlayer and (LocalPlayer:FindFirstChild("PlayerGui") or LocalPlayer:WaitForChild("PlayerGui", 5))
+    if pg then
+        DestroyExistingKaitunGui(pg)
+        if Runtime.Cache.KaitunGuiUsedCoreGui == true then
+            local okCg, cg = pcall(function()
+                return (cloneref and cloneref(game:GetService("CoreGui"))) or game:GetService("CoreGui")
+            end)
+            if okCg and cg then DestroyExistingKaitunGui(cg) end
+            Runtime.Cache.KaitunGuiUsedCoreGui = false
+        end
+        return pg
+    end
     local okCg, cg = pcall(function()
         return (cloneref and cloneref(game:GetService("CoreGui"))) or game:GetService("CoreGui")
     end)
-    if pg then
-        DestroyExistingKaitunGui(pg)
-        if okCg and cg then DestroyExistingKaitunGui(cg) end
-        return pg
-    end
     if okCg and cg then
         DestroyExistingKaitunGui(cg)
+        Runtime.Cache.KaitunGuiUsedCoreGui = true
         return cg
     end
     return nil
@@ -7659,7 +8044,7 @@ local function InitKaitunDashboard()
         local lastErrLogAt = 0
         task.spawn(function()
             while IsRunning() and sg and sg.Parent and Runtime.Cache.KaitunUiToken == uiToken do
-                task.wait(Config.UltraLowRAM and 1.0 or 0.5)
+                task.wait(Config.UltraLowRAM and 1.5 or 0.5)
                 if not (IsRunning() and sg and sg.Parent and Runtime.Cache.KaitunUiToken == uiToken) then break end
                 local uOk, uErr = pcall(RefreshLabels)
                 if not uOk then
@@ -8712,7 +9097,7 @@ local function StartLoops()
                 lastTargetScan = now
                 pcall(Runtime.Helpers.StepFarmLoopTick)
             end
-            task.wait(0.03)
+            task.wait(Config.UltraLowRAM and 0.06 or 0.03)
         end
     end)
 
@@ -8777,7 +9162,8 @@ if WaitReady() and IsRunning() then
         Set3dRenderingSafe(true)
     end
     SetupMapOptimizer()
-    Log("INFO", "Pumpkin Patch Tycoon Kaitun initialized (RushButtons=%s, TargetRebirths=%d, KeepRung=%d, AutoHunt=%s[Min=%d], AutoNetStore=%s, TargetEgg=%s, PetSpeed=%sx, OptimizeMap=%s, ShowKaitunUI=%s, UltraLowRAM=%s, AntiAfkMode=%s, AutoMail=%s).",
+    local initEnv = Runtime.Helpers.DetectMobileAntiAfk()
+    Log("INFO", "Pumpkin Patch Tycoon Kaitun initialized (RushButtons=%s, TargetRebirths=%d, KeepRung=%d, AutoHunt=%s[Min=%d], AutoNetStore=%s, TargetEgg=%s, PetSpeed=%sx, OptimizeMap=%s, ShowKaitunUI=%s, UltraLowRAM=%s, Mobile=%s, FPSCap=%s, AntiAfkMode=%s, AutoMail=%s).",
         tostring(Config.RushButtonsFirst),
         math.floor(tonumber(Config.TargetRebirths) or 0),
         tonumber(Config.KeepRung) or 0,
@@ -8789,6 +9175,8 @@ if WaitReady() and IsRunning() then
         tostring(Config.OptimizeMap),
         tostring(Config.ShowKaitunUI),
         tostring(Config.UltraLowRAM),
+        tostring(initEnv and initEnv.isMobile == true),
+        tostring(Runtime.Cache.ActiveFpsCap or "uncapped"),
         tostring(Config.AntiAfkMode),
         tostring(Config.AutoMail == true)
     )
