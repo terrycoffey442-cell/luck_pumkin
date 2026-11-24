@@ -522,6 +522,8 @@ local Runtime = {
         WildCaught = 0,
         WildHugesCaught = 0,
         SightingsCaught = 0,
+        CatchesRank = nil,
+        CatchesScore = 0,
         FightingTurkeyBoss = false,
         TurkeyBossShare = 0,
         TurkeyBossHealth = 0,
@@ -1100,6 +1102,7 @@ local Modules = {
     InventoryCmds = SafeRequire(Library, "Client", "InventoryCmds"),
     GlobalExistCmds = SafeRequire(Library, "Client", "GlobalExistCmds"),
     RAPCmds = SafeRequire(Library, "Client", "RAPCmds"),
+    LeaderboardCmds = SafeRequire(Library, "Client", "LeaderboardCmds"),
     Directory = SafeRequire(Library, "Directory"),
     AbstractItem = SafeRequire(Library, "Items", "AbstractItem"),
     PetItem = SafeRequire(Library, "Items", "PetItem"),
@@ -1127,6 +1130,7 @@ local Modules = {
     PumpkinStoreUtil = SafeRequire(Library, "Util", "PumpkinTycoonStore"),
     PumpkinSightingUtil = SafeRequire(Library, "Util", "PumpkinTycoonSighting"),
     PumpkinTurkeyUtil = SafeRequire(Library, "Util", "PumpkinTycoonTurkey"),
+    PumpkinContestsUtil = SafeRequire(Library, "Util", "PumpkinTycoonContests"),
     PumpkinIslandCmds = SafeRequire(Library, "Client", "PumpkinTycoonCmds", "Island"),
     PumpkinTurkeyCmds = SafeRequire(Library, "Client", "PumpkinTycoonCmds", "Turkey"),
 
@@ -8058,6 +8062,69 @@ function UI.ReadPedestalLockCounts(plot)
     return locked, maxKeep, effKeep
 end
 
+function UI.ReadCatchesTopStatus()
+    local boardId = (Modules.PumpkinContestsUtil and Modules.PumpkinContestsUtil.BOARD_ID) or "PumpkinTycoonCatches"
+    local lbCmds = Modules.LeaderboardCmds
+    if not lbCmds and Library then
+        local clientFolder = Library:FindFirstChild("Client")
+        local lbInst = clientFolder and clientFolder:FindFirstChild("LeaderboardCmds")
+        if lbInst then
+            local okReq, mod = pcall(require, lbInst)
+            if okReq and type(mod) == "table" then
+                Modules.LeaderboardCmds = mod
+                lbCmds = mod
+            end
+        end
+    end
+
+    local rank, score = nil, 0
+    if lbCmds and type(lbCmds.Get) == "function" then
+        local okGet, state = pcall(lbCmds.Get, boardId)
+        local myData = (okGet and type(state) == "table" and type(state.LocalPlayer) == "table") and state.LocalPlayer or nil
+        if myData then
+            local r = tonumber(myData.GlobalRank)
+            if r and r >= 1 and r == r and r < math.huge then
+                rank = math.floor(r)
+            end
+            local s = tonumber(myData.Score)
+            if s and s >= 0 and s == s and s < math.huge then
+                score = math.floor(s)
+            end
+        end
+    end
+
+    Runtime.Stats.CatchesRank = rank
+    Runtime.Stats.CatchesScore = score
+
+    local tierMax = nil
+    if rank then
+        local okDir, groups = pcall(function()
+            local contestsDir = Modules.Directory and Modules.Directory.LeaderboardContests
+            local entry = SafeDirLookup(contestsDir, boardId)
+            return type(entry) == "table" and entry.SelectGroups or nil
+        end)
+        if okDir and type(groups) == "table" then
+            for i = #groups, 1, -1 do
+                local cutoff = tonumber(groups[i])
+                if cutoff and rank <= cutoff then
+                    tierMax = math.floor(cutoff)
+                end
+            end
+        end
+    end
+
+    if rank then
+        local rankStr = "#" .. Runtime.Helpers.FormatCommas(rank)
+        local scoreStr = Runtime.Helpers.FormatCommas(score)
+        if tierMax then
+            return string.format("Catches Top: %s (%s pts)  |  Tier: Top %s",
+                rankStr, scoreStr, Runtime.Helpers.FormatCommas(tierMax))
+        end
+        return string.format("Catches Top: %s (%s pts)", rankStr, scoreStr)
+    end
+    return string.format("Catches Top: Unranked (%s pts)", Runtime.Helpers.FormatCommas(score))
+end
+
 function UI.FindDashboardParent()
     local pg = LocalPlayer and (LocalPlayer:FindFirstChild("PlayerGui") or LocalPlayer:WaitForChild("PlayerGui", 5))
     if pg then
@@ -8094,6 +8161,7 @@ local function InitKaitunDashboard()
         local C_WHITE  = Color3.new(1, 1, 1)
         local C_GREEN  = Color3.fromRGB(80, 220, 120)
         local C_PURPLE = Color3.fromRGB(180, 150, 255)
+        local C_CYAN   = Color3.fromRGB(90, 215, 255)
 
         local sg = Instance.new("ScreenGui")
         sg.Name = KAITUN_GUI_NAME
@@ -8163,6 +8231,7 @@ local function InitKaitunDashboard()
         local lblEggsCraft = MkText("lblEggsCraft", container, "Eggs: 0 (None)  |  Craft: G 0 / R 0", 18, C_DIM, false, 208, 28)
         local lblTycoon    = MkText("lblTycoon", container, "Tycoon: 0/0 (Wait)  |  Keep: Off (Lock 0/0)", 18, C_DIM, false, 240, 28)
         local lblBoosts    = MkText("lblBoosts", container, "Boosts: Coin Off | Dmg Off | Luck Off", 17, C_PURPLE, false, 272, 27)
+        local lblCatches   = MkText("lblCatches", container, "Catches Top: Unranked (0 pts)", 18, C_CYAN, true, 302, 27)
         local lblStatus    = MkText("lblStatus", container, "Status: Initializing  |  Target: None", 18, C_DIM, false, 332, 28)
         MkSep(container, 370)
         MkText("lblRunning", container, "Running: Pumpkin Patch Tycoon", 22, C_WHITE, true, 385, 34)
@@ -8286,6 +8355,8 @@ local function InitKaitunDashboard()
                 UI.FormatShortTimer(Runtime.Helpers.GetAxisBoostSeconds("Damage")),
                 UI.FormatShortTimer(Runtime.Helpers.GetAxisBoostSeconds("IslandLuck")),
                 Runtime.Helpers.GetActiveFruitCount("Apple")))
+
+            SetTextIfChanged(lblCatches, UI.ReadCatchesTopStatus())
 
             local targetDesc = tostring(Runtime.Stats.ActiveTargetDesc or "None")
             if Runtime.Stats.FightingTurkeyBoss then
