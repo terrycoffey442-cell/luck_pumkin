@@ -19,6 +19,7 @@ getgenv().Config = getgenv().Config or {
     -- Hatching & Crafting
     AutoHatch = true,
     TargetEggName = "Golden Ridge Egg", -- Zone 8 egg (auto-falls back to highest unlocked egg)
+    HatchStartZone = 8,               -- 0 = wait for 117/117 buttons | 1..8 (or "8") = hatch continuously once Zone N & its Egg unlock, yielding 1 beat whenever Coins >= next button
     AutoMakeGold = true,
     AutoMakeRainbow = true,
 
@@ -225,6 +226,7 @@ local DEFAULT_CONFIG = {
     EarlyHatchReserveCoins = true,       -- Temporarily reserve 1x egg cost during early bootstrap before buying buttons
     AutoEquipBestPets = true,            -- Ensure AutoEquipPets / EquipBest equips newly hatched stronger pets immediately
     TargetEggName = "Golden Ridge Egg",
+    HatchStartZone = 8,                  -- 0 = wait for 117/117 buttons | 1..8 (or "8") = hatch continuously once Zone N & its Egg unlock, yielding 1 beat when Coins >= next button
     FallbackHighestUnlockedEgg = true,
     HatchDisableAnimation = true,
     HatchMinBatchMultiplier = 1,    -- Start hatching when Coins >= cost * maxBatch * mult (or >= cost * 1)
@@ -662,6 +664,8 @@ local Runtime = {
         LastGiftAttemptAt = 0,
         LastPassCheckAt = 0,
         LastButtonsStepAt = 0,
+        ButtonBuyRequestedAt = 0,
+        LastButtonBuyFailAt = 0,
         LastKeepLockStepAt = 0,
         LastUpgradesStepAt = 0,
         LastBoostsStepAt = 0,
@@ -2746,6 +2750,8 @@ Runtime.Teardown = function()
     Runtime.Cache.LastNetStoreRefreshIn = nil
     Runtime.Cache.ForceNetStoreShelfFetch = false
     Runtime.Cache.NetStoreForcePadUntil = 0
+    Runtime.Cache.ButtonBuyRequestedAt = 0
+    Runtime.Cache.LastButtonBuyFailAt = 0
     if type(Runtime.Cache.WarnThrottle) == "table" then
         table.clear(Runtime.Cache.WarnThrottle)
     end
@@ -4697,15 +4703,88 @@ function Runtime.Helpers.TryClaimCompletionsAndRebirth(plot, buttons, tycoonComp
     return buttons, tycoonComplete, claimedComplete, claimedComplete2, isPart2, rebirths
 end
 
+local function CollectBuyableButtons(buttons, zones, isPart2, priceMult, tycoonComplete, spendableCoins)
+    local avail = Modules.PumpkinButtonsUtil.Available(buttons, zones, isPart2, priceMult)
+    local hasRank1 = false
+    local minRank1Price = math.huge
+    local eligible = {}
+    for _, btn in ipairs(avail) do
+        local needCannonForBoss = (btn.Id == "Zone8_Cannon") and (Config.AutoTurkeyBoss ~= false)
+        local skipOptional = (btn.Optional == true)
+            and (not tycoonComplete or (not Config.BuyOptionalPart2Buttons and not needCannonForBoss))
+        if not skipOptional then
+            local rank = GetButtonPriorityRank(btn, isPart2)
+            local price = Modules.PumpkinButtonsUtil.Price(btn, priceMult)
+            if rank == 1 then
+                hasRank1 = true
+                if price < minRank1Price then
+                    minRank1Price = price
+                end
+            end
+            table.insert(eligible, { btn = btn, price = price, rank = rank })
+        end
+    end
+
+    local nextMinPrice = nil
+    local affordable = {}
+    for _, item in ipairs(eligible) do
+        -- Save coins for the next critical-path button instead of draining budget on cosmetic leaves
+        if item.rank == 1 or not hasRank1 or item.price <= (minRank1Price * 0.05) then
+            if type(item.price) == "number" and item.price > 0 and (not nextMinPrice or item.price < nextMinPrice) then
+                nextMinPrice = item.price
+            end
+            if spendableCoins ~= nil and item.price <= spendableCoins then
+                table.insert(affordable, item)
+            end
+        end
+    end
+
+    table.sort(affordable, function(a, b)
+        if a.rank ~= b.rank then return a.rank < b.rank end
+        if a.price ~= b.price then return a.price < b.price end
+        return a.btn.Id < b.btn.Id
+    end)
+
+    return affordable, nextMinPrice
+end
+
+function Runtime.Helpers.IsEarlyZoneHatchActive(plot, buttons)
+    local startZone = math.floor(tonumber(Config.HatchStartZone) or 0)
+    if startZone < 1 or not plot or not Modules.PumpkinButtonsUtil or not Modules.PumpkinButtonsUtil.Owned then
+        return false
+    end
+    local zoneList = PT and PT.ZONES
+    if type(zoneList) ~= "table" then return false end
+    local zoneMeta = zoneList[math.clamp(startZone, 1, #zoneList)]
+    if type(zoneMeta) ~= "table" or type(zoneMeta.Section) ~= "string" then return false end
+    local btnState = buttons or Runtime.Cache.Buttons or Runtime.Helpers.GetPlotSave(plot, VAR.Buttons)
+    if type(btnState) ~= "table" then return false end
+    if not Modules.PumpkinButtonsUtil.Owned(btnState, zoneMeta.Section .. "_Zone") then return false end
+    return Modules.PumpkinButtonsUtil.Owned(btnState, zoneMeta.Section .. "_Egg") == true
+end
+
+function Runtime.Helpers.GetNextBuyableButtonMinPrice(plot, buttons, tycoonComplete)
+    if not plot or not Modules.PumpkinButtonsUtil or not Modules.PumpkinButtonsUtil.Available then return nil end
+    local btnState = buttons or Runtime.Cache.Buttons or Runtime.Helpers.GetPlotSave(plot, VAR.Buttons)
+    if type(btnState) ~= "table" then return nil end
+    local isPart2 = Runtime.Helpers.IsPlotPart2Active(plot)
+    local zones = GetZoneCount(plot)
+    local priceMult = GetButtonPriceMult()
+    local _, nextMinPrice = CollectBuyableButtons(btnState, zones, isPart2, priceMult, tycoonComplete == true, nil)
+    return nextMinPrice
+end
+
 local function StepButtonsAndComplete(plot)
     if not plot or not Modules.PumpkinButtonsUtil then return nil, false, false, false, false, 0 end
 
     local now = os.clock()
-    if Runtime.Cache.Buttons ~= nil and (now - (Runtime.Cache.LastButtonsStepAt or 0)) < 0.5 then
+    local buyRequested = (Runtime.Cache.ButtonBuyRequestedAt or 0) > (Runtime.Cache.LastButtonsStepAt or 0)
+    if not buyRequested and Runtime.Cache.Buttons ~= nil and (now - (Runtime.Cache.LastButtonsStepAt or 0)) < 0.5 then
         return Runtime.Cache.Buttons, Runtime.Stats.TycoonComplete, Runtime.Stats.CompletedClaimed,
             Runtime.Stats.Completed2Claimed, Runtime.Helpers.IsPlotPart2Active(plot), Runtime.Stats.Rebirths
     end
     Runtime.Cache.LastButtonsStepAt = now
+    Runtime.Cache.ButtonBuyRequestedAt = 0
 
     local buttons, tycoonComplete, claimedComplete, claimedComplete2, isPart2, rebirths = GetProgressState(plot)
 
@@ -4717,8 +4796,9 @@ local function StepButtonsAndComplete(plot)
     local zones = GetZoneCount(plot)
     local priceMult = GetButtonPriceMult()
     local coins = GetCurrency((PT and PT.COIN) or "PumpkinTycoonCoins")
+    local zoneHatchActive = Runtime.Helpers.IsEarlyZoneHatchActive(plot, buttons)
 
-    if EvaluateEarlyBootstrap and not tycoonComplete then
+    if EvaluateEarlyBootstrap and not tycoonComplete and not zoneHatchActive then
         EvaluateEarlyBootstrap(plot, buttons)
     else
         Runtime.Cache.ReserveEarlyEggCost = 0
@@ -4727,48 +4807,18 @@ local function StepButtonsAndComplete(plot)
     -- Burst buy all currently affordable unlocked buttons in progression priority order (Part 1 + Part 2)
     local boughtThisPass = 0
     while IsRunning() and boughtThisPass < 100 do
-        if Config.RushButtonsFirst and not tycoonComplete and Runtime.Stats.IsHatching then break end
+        if Config.RushButtonsFirst and not tycoonComplete and not zoneHatchActive and Runtime.Stats.IsHatching then break end
         local spendableCoins = math.max(0, coins - (Runtime.Cache.ReserveEarlyEggCost or 0))
-        local avail = Modules.PumpkinButtonsUtil.Available(buttons, zones, isPart2, priceMult)
-        local hasRank1 = false
-        local minRank1Price = math.huge
-        local candidates = {}
-        for _, btn in ipairs(avail) do
-            local needCannonForBoss = (btn.Id == "Zone8_Cannon") and (Config.AutoTurkeyBoss ~= false)
-            local skipOptional = (btn.Optional == true)
-                and (not tycoonComplete or (not Config.BuyOptionalPart2Buttons and not needCannonForBoss))
-            if not skipOptional then
-                local rank = GetButtonPriorityRank(btn, isPart2)
-                local price = Modules.PumpkinButtonsUtil.Price(btn, priceMult)
-                if rank == 1 then
-                    hasRank1 = true
-                    if price < minRank1Price then
-                        minRank1Price = price
-                    end
-                end
-                if price <= spendableCoins then
-                    table.insert(candidates, { btn = btn, price = price, rank = rank })
-                end
-            end
-        end
-        local affordable = {}
-        for _, item in ipairs(candidates) do
-            -- Save coins for the next critical-path button instead of draining budget on cosmetic leaves
-            if item.rank == 1 or not hasRank1 or item.price <= (minRank1Price * 0.05) then
-                table.insert(affordable, item)
-            end
-        end
+        local affordable = CollectBuyableButtons(buttons, zones, isPart2, priceMult, tycoonComplete, spendableCoins)
         if #affordable == 0 then break end
-
-        table.sort(affordable, function(a, b)
-            if a.rank ~= b.rank then return a.rank < b.rank end
-            if a.price ~= b.price then return a.price < b.price end
-            return a.btn.Id < b.btn.Id
-        end)
 
         local pick = affordable[1]
         local ok, res = pcall(plot.Invoke, plot, NET.Buy, pick.btn.Id)
-        if not ok or res == false then break end
+        if not ok or res == false then
+            Runtime.Cache.LastButtonBuyFailAt = os.clock()
+            break
+        end
+        Runtime.Cache.LastButtonBuyFailAt = 0
         boughtThisPass = boughtThisPass + 1
         Runtime.Helpers.InvalidatePlotSave(plot, VAR.Buttons)
         table.clear(Runtime.Cache.TargetEggCache)
@@ -4776,7 +4826,8 @@ local function StepButtonsAndComplete(plot)
         Log("INFO", "Bought Button [%s] (%s) for %s Coins", pick.btn.Id, tostring(pick.btn.Display), tostring(pick.price))
         buttons, tycoonComplete, claimedComplete, claimedComplete2, isPart2, rebirths = GetProgressState(plot, true)
         coins = Runtime.Stats.Coins
-        if EvaluateEarlyBootstrap and not tycoonComplete then
+        zoneHatchActive = Runtime.Helpers.IsEarlyZoneHatchActive(plot, buttons)
+        if EvaluateEarlyBootstrap and not tycoonComplete and not zoneHatchActive then
             EvaluateEarlyBootstrap(plot, buttons)
         else
             Runtime.Cache.ReserveEarlyEggCost = 0
@@ -5896,8 +5947,9 @@ local function StepHatch(plot, buttons, tycoonComplete)
 
     local isEarly = false
     local eggUid, eggName, eggPos, eggMax, eggCost, remainingCap
+    local zoneHatchActive = Runtime.Helpers.IsEarlyZoneHatchActive(plot, buttons)
 
-    if Config.RushButtonsFirst and not tycoonComplete then
+    if Config.RushButtonsFirst and not tycoonComplete and not zoneHatchActive then
         local needEarly
         needEarly, eggUid, eggName, eggPos, eggMax, eggCost, remainingCap = EvaluateEarlyBootstrap(plot, buttons)
         if not needEarly then
@@ -5924,6 +5976,19 @@ local function StepHatch(plot, buttons, tycoonComplete)
     end
 
     local coins = GetCurrency((PT and PT.COIN) or "PumpkinTycoonCoins")
+    -- Yield 1 beat without leaving the hatch/farm overlap spot when Coins >= next priority button price
+    if zoneHatchActive and not tycoonComplete and Config.AutoBuyButtons ~= false
+        and (os.clock() - (Runtime.Cache.LastButtonBuyFailAt or 0)) >= 5.0
+    then
+        local nextBtnPrice = Runtime.Helpers.GetNextBuyableButtonMinPrice(plot, buttons, tycoonComplete)
+        if nextBtnPrice and coins >= nextBtnPrice then
+            Runtime.Cache.ButtonBuyRequestedAt = os.clock()
+            Runtime.Cache.HatchInFlight = false
+            task.wait(0.12)
+            return
+        end
+    end
+
     local batchMult = isEarly and 1 or (tonumber(Config.HatchMinBatchMultiplier) or 1)
     if coins < (eggCost * batchMult) then
         stopHatch()
