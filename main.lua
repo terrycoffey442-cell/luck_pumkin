@@ -323,7 +323,7 @@ local DEFAULT_CONFIG = {
     MailSendDelay = 2.2,                -- Delay (seconds) between consecutive EF_Relay sends
     MailScanInterval = 10.0,            -- Inventory scan interval (seconds)
     MailSkipLocked = true,              -- Skip locked items/pets (_lk / IsLocked)
-    MailSkipEquippedPets = true,        -- Subtract equipped pet counts (PetCmds.GetEquipped) & skip Daycare pets
+    MailSkipEquippedPets = false,        -- Subtract equipped pet counts (PetCmds.GetEquipped) & skip Daycare pets
     MailRoundRobin = false,             -- false = send to first valid recipient; true = rotate recipient per send
     MailWebhookEnabled = false,         -- Optional Discord webhook on sent mail (uses MailWebhookUrl or WebhookUrl)
     MailWebhookUrl = "",                -- Optional dedicated Discord webhook URL for Mail logs
