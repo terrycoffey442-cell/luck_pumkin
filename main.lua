@@ -669,6 +669,10 @@ local Runtime = {
         LastNetStoreFailAt = 0,
         LastNetStoreShelfFetchAt = 0,
         LastNetStoreAutoSyncAt = 0,
+        LastNetStoreRefreshIn = nil,
+        ForceNetStoreShelfFetch = false,
+        NetStoreForcePadUntil = 0,
+        WarnThrottle = {},
         LastWildStepAt = 0,
         LastWildThrowAt = 0,
         LastWildFailAt = 0,
@@ -953,6 +957,20 @@ local function Log(level, fmt, ...)
     print(string.format("[PumpkinKaitun][%s] %s", level, ok and text or tostring(fmt)))
 end
 
+local function LogWarnThrottled(key, cooldownSec, fmt, ...)
+    local now = os.clock()
+    local bucket = Runtime.Cache and Runtime.Cache.WarnThrottle
+    if type(bucket) == "table" and key ~= nil then
+        local lastAt = bucket[key] or 0
+        if (now - lastAt) < (tonumber(cooldownSec) or 15) then
+            Log("DEBUG", fmt, ...)
+            return
+        end
+        bucket[key] = now
+    end
+    Log("WARN", fmt, ...)
+end
+
 local function BindConn(signal, fn)
     if not signal then return nil end
     local conn = signal:Connect(fn)
@@ -1125,47 +1143,82 @@ local PT_AutoBreak = PT_Cmds and SafeRequire(Library, "Client", "PumpkinTycoonCm
 local CRITICAL_MODULE_PATHS = {
     Network = { "Client", "Network" },
     Save = { "Client", "Save" },
+    FFlags = { "Client", "FFlags" },
+    Directory = { "Directory" },
     InstancingCmds = { "Client", "InstancingCmds" },
     ClientPlot = { "Client", "PlotCmds", "ClientPlot" },
+    MachineCmds = { "Client", "MachineCmds" },
+    PetCmds = { "Client", "PetCmds" },
+    PetItem = { "Items", "PetItem" },
     PumpkinTycoon = { "Types", "PumpkinTycoon" },
     PumpkinButtonsUtil = { "Util", "PumpkinTycoonButtons" },
+    PumpkinDamageUtil = { "Util", "PumpkinTycoonDamage" },
+    PumpkinStoreUtil = { "Util", "PumpkinTycoonStore" },
 }
+
+local function ResolveEventCmdsSubmodules()
+    if not PT_Cmds then
+        PT_Cmds = SafeRequire(Library, "Client", "PumpkinTycoonCmds")
+    end
+    if PT_Cmds and not PT_Buttons then
+        PT_Buttons = SafeRequire(Library, "Client", "PumpkinTycoonCmds", "Buttons")
+    end
+    if PT_Cmds and not PT_AutoBreak then
+        PT_AutoBreak = SafeRequire(Library, "Client", "PumpkinTycoonCmds", "AutoBreak")
+    end
+end
 
 local function CollectMissingCriticalModules()
     local missing = {}
     for key, path in pairs(CRITICAL_MODULE_PATHS) do
         if not Modules[key] then
             Modules[key] = SafeRequire(Library, table.unpack(path))
+            if not Modules[key] and key == "FFlags" then
+                Modules[key] = SafeRequire(Library, "Universal", "FFlags")
+            end
         end
         if not Modules[key] then
             table.insert(missing, key)
         end
     end
+    ResolveEventCmdsSubmodules()
+    if not PT_Cmds then
+        table.insert(missing, "PumpkinTycoonCmds")
+    end
     return missing
+end
+
+local function WaitForFFlagsLoaded(timeoutSec)
+    local ff = Modules.FFlags
+    if not ff or type(ff.IsLoaded) ~= "function" then return end
+    local deadline = os.clock() + (tonumber(timeoutSec) or 6.0)
+    while IsRunning() and os.clock() < deadline do
+        local ok, loaded = pcall(ff.IsLoaded)
+        if ok and loaded == true then return end
+        task.wait(0.15)
+    end
 end
 
 local function EnsureCriticalModules()
     local missing = CollectMissingCriticalModules()
-    if #missing == 0 then return true end
+    if #missing == 0 then
+        WaitForFFlagsLoaded(6.0)
+        return true
+    end
 
-    for _ = 1, 5 do
+    for _ = 1, 6 do
         if not IsRunning() then return false end
         task.wait(0.5)
         missing = CollectMissingCriticalModules()
-        if not PT_Cmds then
-            PT_Cmds = SafeRequire(Library, "Client", "PumpkinTycoonCmds")
+        if #missing == 0 then
+            WaitForFFlagsLoaded(6.0)
+            return true
         end
-        if PT_Cmds and not PT_Buttons then
-            PT_Buttons = SafeRequire(Library, "Client", "PumpkinTycoonCmds", "Buttons")
-        end
-        if PT_Cmds and not PT_AutoBreak then
-            PT_AutoBreak = SafeRequire(Library, "Client", "PumpkinTycoonCmds", "AutoBreak")
-        end
-        if #missing == 0 then return true end
     end
 
     table.sort(missing)
     Log("WARN", "Some modules failed to resolve after boot: %s", table.concat(missing, ", "))
+    WaitForFFlagsLoaded(3.0)
     return false
 end
 
@@ -1765,6 +1818,7 @@ local DEBRIS_PRESERVE_NAMES = {
     GREYBOX_WIP = true,
     Ragdolls = true,
     ASSETS = true,
+    TurkeyTag = true,
 }
 local THINGS_CLEAR_FOLDERS = {
     "Ornaments",
@@ -2685,6 +2739,12 @@ Runtime.Teardown = function()
     Runtime.Cache.WildRerollSoldOutLogged = false
     Runtime.Cache.Complete2Unsupported = false
     Runtime.Cache.NetStoreShelfCache = nil
+    Runtime.Cache.LastNetStoreRefreshIn = nil
+    Runtime.Cache.ForceNetStoreShelfFetch = false
+    Runtime.Cache.NetStoreForcePadUntil = 0
+    if type(Runtime.Cache.WarnThrottle) == "table" then
+        table.clear(Runtime.Cache.WarnThrottle)
+    end
     Runtime.Cache.TurkeyBossActiveEndsAt = 0
     Runtime.Cache.TurkeyBossEngagedAt = 0
     Runtime.Cache.TurkeyBossSkippedEndsAt = 0
@@ -2854,12 +2914,32 @@ local function WithMachineSession(callback)
     return true
 end
 
+local function IsMobileLowFpsEnv()
+    local envInfo = Runtime.Helpers and Runtime.Helpers.DetectMobileAntiAfk and Runtime.Helpers.DetectMobileAntiAfk()
+    return (envInfo and envInfo.isMobile == true) or (Config.UltraLowRAM == true)
+end
+
 local function EnsureNearMachinePad(plot, machineName, rangeFn, standOnPad)
-    if not plot or not machineName or not Modules.PumpkinButtonsUtil or not Modules.PumpkinButtonsUtil.MachinePad then return false end
+    if not plot or not machineName or not Modules.PumpkinButtonsUtil or not Modules.PumpkinButtonsUtil.MachinePad then
+        return false, "missing_util"
+    end
     local okPlot, plotModel = pcall(plot.GetModel, plot)
-    if not okPlot or not plotModel then return false end
+    if not okPlot or not plotModel then
+        return false, "no_plot_model"
+    end
     local pad = Modules.PumpkinButtonsUtil.MachinePad(plotModel, machineName)
-    if not pad or not pad:IsA("BasePart") then return false end
+    if not pad or not pad:IsA("BasePart") then
+        local retryDeadline = os.clock() + (IsMobileLowFpsEnv() and 0.80 or 0.35)
+        while IsRunning() and os.clock() < retryDeadline do
+            task.wait(0.10)
+            okPlot, plotModel = pcall(plot.GetModel, plot)
+            pad = (okPlot and plotModel) and Modules.PumpkinButtonsUtil.MachinePad(plotModel, machineName) or nil
+            if pad and pad:IsA("BasePart") then break end
+        end
+        if not pad or not pad:IsA("BasePart") then
+            return false, "pad_not_found"
+        end
+    end
     local range = 20
     if type(rangeFn) == "number" and rangeFn >= 6 then
         range = rangeFn
@@ -2871,8 +2951,11 @@ local function EnsureNearMachinePad(plot, machineName, rangeFn, standOnPad)
     end
     local moveDist = standOnPad and 2.5 or math.clamp(range - 8, 4, 12)
     local _, hrp = GetCharacter()
-    if not hrp then return false end
-    ExtendMachineSession(4.0)
+    if not hrp then return false, "no_hrp" end
+    ExtendMachineSession(5.0)
+
+    local isMobile = IsMobileLowFpsEnv()
+    local jumpDist = (hrp.Position - pad.Position).Magnitude
     local needMove = HorizontalDist(hrp.Position, pad.Position) > moveDist
         or math.abs(hrp.Position.Y - pad.Position.Y) > 6
     if standOnPad and Modules.MachineCmds and Modules.MachineCmds.IsStandingOn then
@@ -2881,32 +2964,105 @@ local function EnsureNearMachinePad(plot, machineName, rangeFn, standOnPad)
             needMove = true
         end
     end
-    if needMove then
+
+    local targetOffset = standOnPad
+        and Vector3.new(0, (pad.Size.Y * 0.5) + 2.8, 0)
+        or Vector3.new(0, 2.5, 1.5)
+    local function snapToPad(rootPart)
+        if not rootPart or not pad or not pad.Parent then return end
         pcall(function()
-            hrp.AssemblyLinearVelocity = Vector3.zero
+            rootPart.AssemblyLinearVelocity = Vector3.zero
+            rootPart.AssemblyAngularVelocity = Vector3.zero
         end)
-        local targetOffset = standOnPad
-            and Vector3.new(0, (pad.Size.Y * 0.5) + 2.8, 0)
-            or Vector3.new(0, 2.5, 1.5)
-        hrp.CFrame = CFrame.new(pad.Position + targetOffset)
+        rootPart.CFrame = CFrame.new(pad.Position + targetOffset)
+    end
+
+    if needMove then
+        if Workspace.StreamingEnabled and jumpDist > 300 and type(LocalPlayer.RequestStreamAroundAsync) == "function" then
+            ExtendMachineSession(5.0)
+            pcall(LocalPlayer.RequestStreamAroundAsync, LocalPlayer, pad.Position, isMobile and 1.2 or 0.8)
+            _, hrp = GetCharacter()
+            if not hrp then return false, "no_hrp" end
+        end
+        snapToPad(hrp)
         Runtime.Cache.LastTeleportAt = os.clock()
     end
-    local waitLeft = 0.38 - (os.clock() - (Runtime.Cache.LastTeleportAt or 0))
-    if waitLeft > 0 then
-        task.wait(waitLeft)
+
+    local minSettleSec = isMobile
+        and ((needMove and jumpDist > 500) and 0.70 or 0.55)
+        or 0.38
+    local maxSettleSec = isMobile
+        and ((needMove and jumpDist > 500) and 1.35 or 1.00)
+        or 0.70
+    local settledAt = Runtime.Cache.LastTeleportAt or os.clock()
+    local minReadyAt = settledAt + minSettleSec
+    local maxDeadline = settledAt + maxSettleSec
+
+    while IsRunning() do
+        ExtendMachineSession(5.0)
+        _, hrp = GetCharacter()
+        if not hrp or not pad or not pad.Parent then
+            return false, "lost_hrp_or_pad"
+        end
+        local curHoriz = HorizontalDist(hrp.Position, pad.Position)
+        local curDist = (hrp.Position - pad.Position).Magnitude
+        local fellBelow = hrp.Position.Y < (pad.Position.Y - 3.5)
+
+        if curHoriz > (moveDist + 2) or fellBelow then
+            snapToPad(hrp)
+            local snapWait = isMobile and 0.25 or 0.15
+            minReadyAt = math.min(maxDeadline, math.max(minReadyAt, os.clock() + snapWait))
+        end
+
+        local now = os.clock()
+        if now >= minReadyAt and curDist <= (range - 1) and not fellBelow then
+            if not standOnPad then
+                return true, nil
+            end
+            local readySignal = false
+            if Modules.MachineCmds then
+                if type(Modules.MachineCmds.CanUse) == "function" then
+                    local okUse, canUse = pcall(Modules.MachineCmds.CanUse, machineName)
+                    if okUse and canUse == true then
+                        readySignal = true
+                    end
+                end
+                if not readySignal and type(Modules.MachineCmds.IsStandingOn) == "function" then
+                    local okOn, standing = pcall(Modules.MachineCmds.IsStandingOn, machineName)
+                    if okOn and standing == true then
+                        readySignal = true
+                    end
+                end
+            end
+            if readySignal or now >= (minReadyAt + (isMobile and 0.20 or 0.08)) then
+                return true, nil
+            end
+        end
+
+        if now >= maxDeadline then break end
+        task.wait(isMobile and 0.08 or 0.05)
     end
+
     _, hrp = GetCharacter()
-    if not hrp or (hrp.Position - pad.Position).Magnitude > (range - 1) then return false end
-    return true
+    if not hrp or not pad or not pad.Parent then
+        return false, "lost_hrp_or_pad"
+    end
+    local finalDist = (hrp.Position - pad.Position).Magnitude
+    if finalDist > (range - 1) then
+        return false, string.format("out_of_range(%.1f>%d)", finalDist, range - 1)
+    end
+    return true, nil
 end
 
 local function WithMachinePad(plot, machineName, rangeFn, callback, opts)
     BeginMachineSession(1.5)
     local standOnPad = type(opts) == "table" and opts.standOnPad == true
     local closeModal = type(opts) == "table" and opts.closeModal == true
-    if not EnsureNearMachinePad(plot, machineName, rangeFn, standOnPad) then
+    local nearOk, nearErr = EnsureNearMachinePad(plot, machineName, rangeFn, standOnPad)
+    if not nearOk then
         EndMachineSession()
-        return false
+        LogWarnThrottled("pad_" .. tostring(machineName), 20, "Machine pad unreachable [%s]: %s", tostring(machineName), tostring(nearErr))
+        return false, nearErr
     end
     if closeModal then
         CloseMachineTab(machineName)
@@ -2922,10 +3078,10 @@ local function WithMachinePad(plot, machineName, rangeFn, callback, opts)
     end
     EndMachineSession()
     if not ok then
-        Log("DEBUG", "Machine action error [%s]: %s", tostring(machineName), tostring(err))
-        return false
+        LogWarnThrottled("act_" .. tostring(machineName), 20, "Machine action error [%s]: %s", tostring(machineName), tostring(err))
+        return false, tostring(err)
     end
-    return true
+    return true, nil
 end
 
 local function GetCurrency(currencyId)
@@ -3248,8 +3404,9 @@ function Runtime.Helpers.IsPlotPart2Active(plot)
             local builtAttr = (PT and PT.PART2_BUILT) or "Part2Built"
             return model:GetAttribute(builtAttr) == true
         end
+        return false
     end
-    return true
+    return false
 end
 
 local function GetZoneCount(plot)
@@ -5805,8 +5962,9 @@ local function StepHatch(plot, buttons, tycoonComplete)
         else
             MoveNear(ComputeEggOverlapPos(eggPos, moveMaxDist), 4)
         end
-        local waitUntil = os.clock() + 1.10
-        task.wait(0.15) -- Allow physics position replication before CustomEggs_Hatch range check
+        local isMobile = IsMobileLowFpsEnv()
+        local waitUntil = os.clock() + (isMobile and 1.40 or 1.10)
+        task.wait(isMobile and 0.35 or 0.15) -- Allow physics position replication before CustomEggs_Hatch range check
         local eggObj = Modules.CustomEggsCmds and Modules.CustomEggsCmds.Get and Modules.CustomEggsCmds.Get(eggUid)
         while IsRunning() and eggObj and eggObj._hatchable ~= true and os.clock() < waitUntil do
             task.wait(0.04)
@@ -6122,7 +6280,7 @@ function Craft.ExecutePlans(plot, spec, plans, cost)
     local padVisited, hadFailure = false, false
     local consumedByUid = {}
 
-    local padOk = WithMachinePad(plot, spec.machineName, 80, function()
+    local padOk, padErr = WithMachinePad(plot, spec.machineName, 80, function()
         padVisited = true
         Runtime.Stats.Phase = "Crafting " .. spec.kind
         CloseMachineTab(spec.machineName)
@@ -6131,7 +6289,7 @@ function Craft.ExecutePlans(plot, spec, plans, cost)
         for _, plan in ipairs(plans) do
             local remaining = plan.crafts
             while IsRunning() and remaining > 0 do
-                ExtendMachineSession(4.0)
+                ExtendMachineSession(5.0)
                 local batch = math.min(remaining, maxPerInvoke)
                 local callOk, invokeOk, errOrMsg, shinyCount = pcall(Modules.Network.Invoke, spec.invokeName, plan.uid, batch)
                 if callOk and invokeOk == true then
@@ -6153,7 +6311,7 @@ function Craft.ExecutePlans(plot, spec, plans, cost)
                 else
                     hadFailure = true
                     Runtime.Cache.CraftFailUntil[spec.kind] = os.clock() + (tonumber(Config.CraftFailCooldownSec) or 10)
-                    Log("DEBUG", "Craft %s failed [%s x%d]: %s",
+                    LogWarnThrottled("craft_fail_" .. spec.kind, 15, "Craft %s failed [%s x%d]: %s",
                         spec.kind, tostring(plan.petId), batch, tostring(errOrMsg or invokeOk))
                     break
                 end
@@ -6167,7 +6325,8 @@ function Craft.ExecutePlans(plot, spec, plans, cost)
     if not padVisited or not padOk then
         hadFailure = true
         Runtime.Cache.CraftFailUntil[spec.kind] = os.clock() + (tonumber(Config.CraftFailCooldownSec) or 10)
-        Log("DEBUG", "Craft %s machine pad unavailable [%s]", spec.kind, tostring(spec.machineName))
+        LogWarnThrottled("craft_pad_" .. spec.kind, 15, "Craft %s machine pad unavailable [%s] (reason=%s)",
+            spec.kind, tostring(spec.machineName), tostring(padErr or "unknown"))
     end
 
     return totalCrafted, totalShiny, hadFailure, consumedByUid
@@ -6340,16 +6499,17 @@ local function StepCraftPets(plot, buttons)
                         prevCrafted = 0
                         break
                     end
+                    local repTimeout = IsMobileLowFpsEnv() and 2.50 or 0.90
                     local updatedInv, newTotal, newProtected = Craft.WaitForReplication(
                         prevGoldCount,
                         prevBeforeAmounts,
                         prevConsumedByUid,
                         prevCrafted,
-                        0.90
+                        repTimeout
                     )
                     if not updatedInv then
-                        Log("DEBUG", "Skipping %s pass: waiting for prior %s save replication timed out",
-                            spec.kind, CRAFT_SPECS[idx - 1].kind)
+                        LogWarnThrottled("craft_rep_" .. spec.kind, 20, "Skipping %s pass: waiting for prior %s save replication timed out (%.2fs)",
+                            spec.kind, CRAFT_SPECS[idx - 1].kind, repTimeout)
                         break
                     end
                     invPets = updatedInv
@@ -6547,28 +6707,102 @@ function Runtime.Helpers.EnsureSightingHook()
     end)
 end
 
+local function CloneNetStoreShelf(raw)
+    if type(raw) ~= "table" or raw.seed == nil or type(raw.offers) ~= "table" or #raw.offers == 0 then
+        return nil
+    end
+    local offers = {}
+    for _, o in ipairs(raw.offers) do
+        if type(o) == "table" then
+            table.insert(offers, {
+                slot = tonumber(o.slot) or 0,
+                item = tostring(o.item or ""),
+                price = tonumber(o.price) or 0,
+                left = tonumber(o.left) or 0,
+            })
+        end
+    end
+    table.sort(offers, function(a, b)
+        return a.slot < b.slot
+    end)
+    return { seed = raw.seed, offers = offers }
+end
+
+local function SyncNetStoreShelfWithFeature(cached, featShelf)
+    if not featShelf then return cached end
+    if not cached or cached.seed == nil then
+        return CloneNetStoreShelf(featShelf)
+    end
+    local cachedSeedNum = tonumber(cached.seed)
+    local featSeedNum = tonumber(featShelf.seed)
+    if cached.seed ~= featShelf.seed then
+        -- Accept newer seed from Store feature; ignore older stale seed after an authoritative NET.NetShelf fetch
+        if cachedSeedNum and featSeedNum and featSeedNum < cachedSeedNum then
+            return cached
+        end
+        return CloneNetStoreShelf(featShelf)
+    end
+    -- Same seed: only tighten remaining stock downward from Store feature so local decrements are preserved
+    local featBySlot = {}
+    for _, o in ipairs(featShelf.offers) do
+        featBySlot[tonumber(o.slot) or 0] = tonumber(o.left) or 0
+    end
+    for _, o in ipairs(cached.offers) do
+        local fLeft = featBySlot[tonumber(o.slot) or 0]
+        if type(fLeft) == "number" and fLeft < (tonumber(o.left) or 0) then
+            o.left = math.max(0, fLeft)
+        end
+    end
+    return cached
+end
+
+local function CanBuyNetStoreRemotely(merchantId)
+    if os.clock() < (Runtime.Cache.NetStoreForcePadUntil or 0) then
+        return false
+    end
+    local okD, ignoreDist = pcall(function()
+        local merDir = Modules.Directory and Modules.Directory.Merchants
+        local entry = SafeDirLookup(merDir, merchantId)
+        return type(entry) == "table" and entry.IgnoreMachineDistance == true
+    end)
+    return okD and ignoreDist == true
+end
+
 function Runtime.Helpers.GetNetStoreShelf(plot, forceFetch)
     local storeFeat = PT_Cmds and type(PT_Cmds.Feature) == "function" and select(2, pcall(PT_Cmds.Feature, "Store")) or nil
-    local shelf = nil
-    if not forceFetch and storeFeat and type(storeFeat.Shelf) == "function" then
+    local mustFetch = (forceFetch == true) or (Runtime.Cache.ForceNetStoreShelfFetch == true)
+
+    local featShelf = nil
+    if not mustFetch and storeFeat and type(storeFeat.Shelf) == "function" then
         local okS, resS = pcall(storeFeat.Shelf)
         if okS and type(resS) == "table" and resS.seed ~= nil and type(resS.offers) == "table" and #resS.offers > 0 then
-            shelf = resS
+            featShelf = resS
         end
     end
 
-    local needFetch = forceFetch or (shelf == nil)
-    if not needFetch and storeFeat and type(storeFeat.RefreshIn) == "function" then
+    local shelf = Runtime.Cache.NetStoreShelfCache
+    if not mustFetch and featShelf then
+        shelf = SyncNetStoreShelfWithFeature(shelf, featShelf)
+        Runtime.Cache.NetStoreShelfCache = shelf
+    end
+
+    local needFetch = mustFetch or (shelf == nil)
+    if storeFeat and type(storeFeat.RefreshIn) == "function" then
         local okR, rem = pcall(storeFeat.RefreshIn)
-        if okR and type(rem) == "number" and rem <= 2 then
-            needFetch = true
+        if okR and type(rem) == "number" then
+            local prevRem = Runtime.Cache.LastNetStoreRefreshIn
+            Runtime.Cache.LastNetStoreRefreshIn = rem
+            if rem <= 2 or (type(prevRem) == "number" and rem > (prevRem + 30)) then
+                needFetch = true
+            end
         end
     end
 
     local now = os.clock()
-    if needFetch and plot and (now - (Runtime.Cache.LastNetStoreShelfFetchAt or 0)) >= 5.0 then
+    local fetchMinCooldown = mustFetch and 1.5 or 5.0
+    if needFetch and plot and (now - (Runtime.Cache.LastNetStoreShelfFetchAt or 0)) >= fetchMinCooldown then
         Runtime.Cache.LastNetStoreShelfFetchAt = now
-        local okCall, okRes, _, data = pcall(plot.Invoke, plot, NET.NetShelf)
+        local okCall, okRes, errFetch, data = pcall(plot.Invoke, plot, NET.NetShelf)
         if okCall and okRes and type(data) == "table" and type(data.Offers) == "table" then
             local parsed = {}
             for slotKey, offer in pairs(data.Offers) do
@@ -6586,9 +6820,15 @@ function Runtime.Helpers.GetNetStoreShelf(plot, forceFetch)
             end)
             shelf = { seed = data.Seed, offers = parsed }
             Runtime.Cache.NetStoreShelfCache = shelf
+            Runtime.Cache.ForceNetStoreShelfFetch = false
+        else
+            LogWarnThrottled("netstore_shelf", 20, "Net Store shelf fetch failed: %s", tostring(errFetch or okRes))
         end
     end
 
+    if Runtime.Cache.ForceNetStoreShelfFetch == true then
+        return nil, storeFeat
+    end
     return shelf or Runtime.Cache.NetStoreShelfCache, storeFeat
 end
 
@@ -6608,19 +6848,17 @@ function Runtime.Helpers.StepNetStore(plot, buttons, tycoonComplete)
     if (now - (Runtime.Cache.LastNetStoreStepAt or 0)) < interval then return end
     Runtime.Cache.LastNetStoreStepAt = now
 
-    if (now - (Runtime.Cache.LastNetStoreFailAt or 0)) < 10.0 then return end
+    if (now - (Runtime.Cache.LastNetStoreFailAt or 0)) < 6.0 then return end
 
-    local shelf, storeFeat = Runtime.Helpers.GetNetStoreShelf(plot, false)
+    local shelf = Runtime.Helpers.GetNetStoreShelf(plot, false)
 
-    -- Keep server built-in AutoBuyNets off so Rush budget rules are enforced accurately
+    -- Keep server built-in AutoBuyNets off so Rush budget rules are enforced accurately.
+    -- Note: Store.AutoOn() requires the Merchant UI tab to be open, so always read plot save via PumpkinTycoonStore.AutoOn.
     if Config.KeepServerAutoNetsOff ~= false and (now - (Runtime.Cache.LastNetStoreAutoSyncAt or 0)) >= 15.0 then
         local serverAutoOn = false
-        if storeFeat and type(storeFeat.AutoOn) == "function" then
-            local okA, resA = pcall(storeFeat.AutoOn)
-            serverAutoOn = okA and resA == true
-        elseif storeUtil and type(storeUtil.AutoOn) == "function" then
+        if storeUtil and type(storeUtil.AutoOn) == "function" then
             local autoVar = storeUtil.AUTO_VAR or "NetStoreAuto"
-            local pumpAutoVar = storeUtil.PUMPKIN_AUTO_VAR or "AutoBuy"
+            local pumpAutoVar = storeUtil.PUMPKIN_AUTO_VAR or "MerchantAuto"
             local okA, resA = pcall(storeUtil.AutoOn, Runtime.Helpers.GetPlotSave(plot, autoVar), Runtime.Helpers.GetPlotSave(plot, pumpAutoVar))
             serverAutoOn = okA and resA == true
         end
@@ -6708,7 +6946,7 @@ function Runtime.Helpers.StepNetStore(plot, buttons, tycoonComplete)
 
     if #plan == 0 then return end
 
-    WithMachinePad(plot, merchantId, 20, function()
+    local function executeNetPurchases(usedRemoteMode)
         for _, req in ipairs(plan) do
             if not IsRunning() then break end
             for _ = 1, req.qty do
@@ -6716,14 +6954,29 @@ function Runtime.Helpers.StepNetStore(plot, buttons, tycoonComplete)
                 local okBuy, resBuy, errBuy = pcall(Modules.Network.Invoke, "Merchant_RequestPurchase", merchantId, req.offer.slot, false, shelf.seed)
                 if okBuy and resBuy == true then
                     req.offer.left = math.max(0, (tonumber(req.offer.left) or 1) - 1)
+                    Runtime.Cache.LastNetStoreFailAt = 0
                     Runtime.Helpers.RecordCoinsSpent(req.cost)
                     Runtime.Stats.NetsBought = (Runtime.Stats.NetsBought or 0) + 1
                     Log("INFO", "Bought [%s] (slot %d) for %s Coins", tostring(req.offer.item), req.offer.slot, tostring(req.cost))
                     task.wait(0.08)
                 else
+                    local reasonText = tostring(errBuy or resBuy)
                     Runtime.Cache.LastNetStoreFailAt = os.clock()
                     Runtime.Cache.LastNetStoreShelfFetchAt = 0
-                    Log("DEBUG", "Net Store buy failed [%s slot %d]: %s", tostring(req.offer.item), req.offer.slot, tostring(errBuy or resBuy))
+                    Runtime.Cache.ForceNetStoreShelfFetch = true
+                    if usedRemoteMode then
+                        local lowerReason = string.lower(reasonText)
+                        if string.find(lowerReason, "far", 1, true)
+                            or string.find(lowerReason, "close", 1, true)
+                            or string.find(lowerReason, "dist", 1, true)
+                            or string.find(lowerReason, "pad", 1, true)
+                            or string.find(lowerReason, "near", 1, true)
+                        then
+                            Runtime.Cache.NetStoreForcePadUntil = os.clock() + 300
+                        end
+                    end
+                    LogWarnThrottled("netstore_buy", 15, "Net Store buy failed [%s slot %d, seed=%s, remote=%s]: %s",
+                        tostring(req.offer.item), req.offer.slot, tostring(shelf.seed), tostring(usedRemoteMode), reasonText)
                     return
                 end
             end
@@ -6731,7 +6984,15 @@ function Runtime.Helpers.StepNetStore(plot, buttons, tycoonComplete)
         if Modules.TabController and Modules.TabController.IsOpen and Modules.TabController.IsOpen("Merchant") then
             pcall(Modules.TabController.CloseTab)
         end
-    end, { closeModal = true })
+    end
+
+    if CanBuyNetStoreRemotely(merchantId) then
+        executeNetPurchases(true)
+    else
+        WithMachinePad(plot, merchantId, 20, function()
+            executeNetPurchases(false)
+        end, { closeModal = true })
+    end
 end
 
 function Runtime.Helpers.StepSightingCatch(plot)
